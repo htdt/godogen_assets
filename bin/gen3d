@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# gen3d: image -> textured GLB with TRELLIS.2-4B (mesh/README.md). Runs mesh/.conda with a cleaned environment.
+# MALLOC_MMAP_THRESHOLD_: tensors >= 1 MB are mmap-allocated, so weights shuttled between CPU and GPU go back to the
+# OS on free (otherwise glibc heap fragmentation grows host RAM by several GB over a run).
+set -euo pipefail
+root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+python="$root/mesh/.conda/bin/python"
+[[ -x $python ]] || { echo "gen3d: not installed, run $root/setup.sh mesh" >&2; exit 1; }
+exec env -u LD_LIBRARY_PATH -u PYTHONPATH -u VIRTUAL_ENV CUDA_HOME="$root/mesh/.conda" MALLOC_MMAP_THRESHOLD_=1048576 \
+  "$python" "$root/mesh/gen3d.py" "$@"

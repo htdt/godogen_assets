@@ -1,0 +1,14 @@
+# Qwen-Image-2.1 (setup.sh installs this into image/.venv). Versions are the tested set.
+# diffusers comes from git: QwenImage21Pipeline is not in a PyPI release yet.
+torch==2.14.0
+torchvision==0.29.0
+transformers==5.17.0
+diffusers @ git+https://github.com/huggingface/diffusers@8b3c707ebd3ec4881f4190cf42931da07eaf3b65
+accelerate==1.15.0
+bitsandbytes==0.50.2
+torchao==0.18.0
+huggingface_hub==1.32.0
+hf_xet
+pillow
+sentencepiece
+protobuf

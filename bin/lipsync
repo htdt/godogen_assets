@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# lipsync: give a rigged character (mia-rig output) a speaking mouth and lip-sync it to a voice line
+# (lipsync/README.md). CPU + short Blender renders.
+#
+#   lipsync RIGGED.glb LINE.wav [-t LINE.txt] [-o DIR] [--no-render] [--engine eevee|cycles] [--hinge-depth 0.62]
+#           [--phonetic] [--json]
+#       mouth rig + one clip "speak", written into DIR (default lipsync/outputs/<name>/):
+#         <name>_mouth.glb + .face.json   rig + jaw bone, cut lips, teeth, morph targets wide/round; no animation
+#         <name>_speak.glb                the same + glTF animation "speak" (jaw rotation + morph weights only)
+#         <name>_speak.mp4                face close-up | head and shoulders, with the audio (unless --no-render)
+#         poses.png, work/                check sheet; landmark detections, cut debug, Rhubarb cues, logs
+#   lipsync --add CLIP GLB LINE.wav [-t LINE.txt] [-o OUT.glb] [--face FACE.json] [--phonetic] [--json]
+#       one more clip named CLIP on a GLB that already has the mouth (lipsync or add-moves output). The face JSON
+#       defaults to <GLB without .glb>.face.json, else <name>_mouth.face.json beside it; OUT defaults to GLB itself.
+#
+# -t: the transcript helps Rhubarb; --phonetic: Rhubarb's language-independent recognizer (non-English lines).
+# stdout: the output GLB path (or a JSON object with --json); progress on stderr; exit 0 / 1.
+set -euo pipefail
+root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+BLENDER=${BLENDER:-$root/deps/blender/blender}
+[[ ${1:-} = -h || ${1:-} = --help ]] && { sed -n '2,17p' "$0" | cut -c3-; exit 0; }
+[[ -x $BLENDER && -x $root/lipsync/.venv/bin/python && -x $root/lipsync/rhubarb/rhubarb ]] \
+  || { echo "lipsync: not installed, run $root/setup.sh blender lipsync" >&2; exit 1; }
+unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+
+add=""; text=""; out=""; face=""; render=1; engine=eevee; json=0; rigargs=(); lsargs=(); pos=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --add) add=$2; shift 2;;
+    -t) text=$(readlink -f "$2"); shift 2;;
+    -o) out=$2; shift 2;;
+    --face) face=$(readlink -f "$2"); shift 2;;
+    --no-render) render=0; shift;;
+    --engine) engine=$2; shift 2;;
+    --hinge-depth) rigargs+=(--hinge-depth "$2"); shift 2;;
+    --phonetic) lsargs+=(--phonetic); shift;;
+    --json) json=1; shift;;
+    -h|--help) sed -n '2,17p' "$0" | cut -c3-; exit 0;;
+    -*) echo "lipsync: unknown option $1" >&2; exit 1;;
+    *) pos+=("$1"); shift;;
+  esac
+done
+[[ ${#pos[@]} -eq 2 ]] || { echo "usage: lipsync RIGGED.glb LINE.wav [options] | lipsync --add CLIP GLB LINE.wav" >&2; exit 1; }
+glb=$(readlink -f "${pos[0]}"); wav=$(readlink -f "${pos[1]}")
+[[ -n $text ]] && lsargs+=(--text "$text")
+
+result() {  # result key value ... -> JSON object (with --json) or the output path on stdout
+  if [[ $json = 1 ]]; then
+    python3 -c 'import json, sys; a = sys.argv[1:]
+print(json.dumps({k: int(v) if v.isdigit() else (v or None) for k, v in zip(a[::2], a[1::2])}))' "$@"
+  else
+    echo "$2"
+  fi
+}
+t0=$(date +%s)
+
+if [[ -n $add ]]; then
+  if [[ -z $face ]]; then  # next to the GLB, else the mouth rig's (x_speak.glb -> x_mouth.face.json)
+    face=${glb%.glb}.face.json
+    base=$(basename "$glb" .glb); base=${base%_speak}; base=${base%_moves}
+    [[ -f $face ]] || face=$(dirname "$glb")/${base}_mouth.face.json
+  fi
+  [[ -f $face ]] || { echo "lipsync: no face JSON at $face (pass --face)" >&2; exit 1; }
+  out=$(readlink -f "${out:-$glb}")
+  log=$(mktemp)
+  "$BLENDER" -b --factory-startup -P "$root/lipsync/lipsync.py" -- "$glb" "$wav" "$out" --face "$face" \
+    --action "$add" "${lsargs[@]}" > "$log" 2>&1 || { tail -20 "$log" >&2; exit 1; }
+  grep -E '^WROTE|removed' "$log" >&2 || true
+  rm -f "$log" "${out%.glb}.rhubarb.json"
+  [[ ${out%.glb}.face.json = "$face" ]] || cp "$face" "${out%.glb}.face.json"
+  result output "$out" clip "$add" face "${out%.glb}.face.json" seconds "$(( $(date +%s) - t0 ))"
+  exit 0
+fi
+
+name=$(basename "$glb" .glb); name=${name%_rigged}
+outdir=$(readlink -f "${out:-$root/lipsync/outputs/$name}")
+mkdir -p "$outdir/work"
+run() {  # run script.py args... : Blender headless, log in work/
+  local log="$outdir/work/$(basename "$1" .py).log"
+  "$BLENDER" -b --factory-startup -P "$@" > "$log" 2>&1 || { tail -20 "$log" >&2; exit 1; }
+}
+run "$root/lipsync/mouth_rig.py" -- "$glb" "$outdir/${name}_mouth.glb" --work "$outdir/work" "${rigargs[@]}"
+grep '^WROTE' "$outdir/work/mouth_rig.log" | cut -c1-200 >&2
+run "$root/lipsync/face_test.py" -- "$outdir/${name}_mouth.glb" "$outdir/poses.png" --res 320 --views front,34,section
+video=""
+[[ $render = 1 ]] && { video="$outdir/${name}_speak.mp4"; lsargs+=(--render "$video" --head-motion --engine "$engine"); }
+run "$root/lipsync/lipsync.py" -- "$outdir/${name}_mouth.glb" "$wav" "$outdir/${name}_speak.glb" "${lsargs[@]}"
+grep '^WROTE' "$outdir/work/lipsync.log" >&2
+mv -f "$outdir/${name}_speak.rhubarb.json" "$outdir/work/" 2>/dev/null || true
+rm -rf "$outdir/${name}_speak_frames"
+echo "done in $(( $(date +%s) - t0 )) s -> $outdir" >&2
+result output "$outdir/${name}_speak.glb" mouth "$outdir/${name}_mouth.glb" face "$outdir/${name}_mouth.face.json" \
+  video "$video" check_sheet "$outdir/poses.png" seconds "$(( $(date +%s) - t0 ))"

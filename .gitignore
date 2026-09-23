@@ -1,0 +1,18 @@
+# Everything setup.sh builds or downloads, and everything the tools write, stays out of git.
+.venv/
+.conda/
+__pycache__/
+*.pyc
+models/
+outputs/
+deps/
+
+# upstream checkouts (pinned in the setup scripts)
+mesh/TRELLIS.2/
+mesh/extensions/
+rig/Make-It-Animatable/
+motion/kimodo/
+motion/kimodo-practical/
+motion/kimenv/
+motion/text_encoders
+lipsync/rhubarb/

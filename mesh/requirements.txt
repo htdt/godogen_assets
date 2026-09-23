@@ -1,0 +1,20 @@
+# TRELLIS.2 runtime (setup.sh installs torch 2.6.0 cu124 first, then this file, then the CUDA extensions).
+# Versions are the tested set; the two hard pins below break TRELLIS.2 when relaxed.
+transformers==4.57.6              # 5.x changes the DINOv3 loading TRELLIS.2 relies on
+opencv-python-headless==4.14.0.94 # 5.x breaks DINOv3 preprocessing / EXR loading
+imageio==2.37.4
+imageio-ffmpeg==0.6.0
+easydict==1.13
+trimesh==5.1.0
+kornia==0.8.2
+timm==1.0.30
+huggingface_hub==0.36.2
+tqdm
+ninja
+zstandard
+pandas
+lpips
+tensorboard
+gradio==6.0.1
+utils3d @ git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
+flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.3/flash_attn-2.7.3+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl

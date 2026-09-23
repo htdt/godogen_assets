@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# asset-blender: run a Blender script headless with the repo's Blender 4.5 LTS (deps/blender, or $BLENDER),
+# factory settings and a cleaned environment. For the check scripts in tools/ and lipsync/:
+#
+#   asset-blender tools/pose_test.py -- rigged.glb poses.png
+#
+# A relative script path that does not exist in the current directory is taken relative to the repo root.
+set -euo pipefail
+root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+BLENDER=${BLENDER:-$root/deps/blender/blender}
+[[ -x $BLENDER ]] || { echo "asset-blender: no Blender at $BLENDER, run $root/setup.sh blender" >&2; exit 1; }
+[[ $# -ge 1 ]] || { sed -n '2,7p' "$0" | cut -c3-; exit 1; }
+script=$1; shift
+[[ -f $script || $script = /* || ! -f $root/$script ]] || script=$root/$script
+exec env -u LD_LIBRARY_PATH -u PYTHONPATH -u VIRTUAL_ENV "$BLENDER" -b --factory-startup -P "$script" "$@"

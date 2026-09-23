@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# mia-rig: auto-rig a humanoid GLB with Make-It-Animatable (rig/README.md). CPU only; runs rig/.conda with a cleaned
+# environment and the repo's Blender (deps/blender, or $BLENDER).
+set -euo pipefail
+root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+python="$root/rig/.conda/bin/python"
+[[ -x $python ]] || { echo "mia-rig: not installed, run $root/setup.sh rig" >&2; exit 1; }
+exec env -u LD_LIBRARY_PATH -u PYTHONPATH -u VIRTUAL_ENV "$python" "$root/rig/mia_rig.py" "$@"
