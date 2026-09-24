@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kimodo motion stack. motion/ is KIMODO_HOME, with the fixed layout godogen's motion.md expects:
+# Kimodo motion stack, installed into motion/:
 #   kimodo/            upstream NVIDIA Kimodo (pinned), editable-installed into kimenv/
 #   kimenv/            Python 3.12 venv (torch 2.6.0 cu124); run tools as kimenv/bin/python -P ..., never the console
 #                      scripts (-P: from this folder, the kimodo/ checkout would shadow the installed package)

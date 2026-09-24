@@ -48,7 +48,7 @@ add-moves out/rig/hero_rigged.glb                                  # -> out/rig/
 
 # custom moves: a spec of prompts (motion/README.md) -> a move set, on top of the basic one
 gen-moves hero_moves.json -o out/moves/hero                        # -> out/moves/hero/
-add-moves out/rig/hero_rigged.glb --baked "$KIMODO_HOME/basic" --baked out/moves/hero
+add-moves out/rig/hero_rigged.glb --baked motion/basic --baked out/moves/hero
 
 # talking: voice line -> mouth rig -> moves + speech in one GLB
 qwen-tts design "Halt, traveller." --voice "Male, around 40, stern castle guard" -o line.wav
@@ -93,7 +93,6 @@ model; the other gated repos are replaced by public mirrors).
 git clone <this repo> godogen_assets && cd godogen_assets
 ./setup.sh                     # all parts; or pick: blender image mesh rig motion lipsync sfx voice
 ./setup.sh link                # bin/* -> ~/.local/bin (or add bin/ to PATH)
-echo "export KIMODO_HOME=$PWD/motion" >> ~/.bashrc   # (and ~/.zshrc) godogen's motion docs key on it
 ```
 
 `setup.sh` is idempotent (re-run after a failure) and pins the tested upstream commits and package versions; each
@@ -118,7 +117,7 @@ Check the install:
 qwen-image info && stable-audio info && qwen-tts info
 qwen-image rgba --resolution 512 --steps 10 "a red apple" -o /tmp/apple.png
 gen3d --type 512 --no-preview /tmp/apple.png -o /tmp/gen3d && mia-rig --help >/dev/null && add-moves --help
-ls "$KIMODO_HOME/basic/manifest.json"                              # the basic move set, baked by setup
+ls motion/basic/manifest.json                                      # the basic move set, baked by setup
 ```
 
 ## Checking results
@@ -141,7 +140,7 @@ bin/       the commands (thin launchers into each part's environment)
 image/     qwen-image    cli.py, generate.py (quantized pipeline), quantize.py
 mesh/      gen3d         gen3d.py, lowmem.py (the 12 GB patches for TRELLIS.2), test_lowmem.py
 rig/       mia-rig       mia_rig.py, Blender rig scripts (normalize_rig, merge_anim, rigops), make_templates.py
-motion/    gen-moves     KIMODO_HOME: gen_moves.py (Kimodo via kimodo-practical), basic.json (the default set)
+motion/    gen-moves     gen_moves.py (Kimodo via kimodo-practical), basic.json (the default set)
            add-moves     add_moves.py (the transfer)
 lipsync/   lipsync       mouth_rig.py, lipsync.py, face_landmarks.py, check renders (face_test, hole_check)
 sfx/       stable-audio  cli.py

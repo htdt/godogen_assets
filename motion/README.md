@@ -4,18 +4,19 @@ Humanoid moves generated from text prompts with [NVIDIA Kimodo](https://research
 (text- and constraint-conditioned motion diffusion, trained on studio mocap that covers locomotion, gestures,
 everyday actions, videogame combat and dance). `gen-moves` generates and gates a move set with
 [kimodo-practical](https://github.com/htdt/kimodo-practical)'s `kimogen.py` and bakes it; `add-moves` puts baked
-moves onto a Mixamo rig as ordinary glTF clips. This folder is `KIMODO_HOME`.
+moves onto a Mixamo rig as ordinary glTF clips.
 
 ## Moves onto a character
 
 ```bash
 add-moves out/rig/hero_rigged.glb                                 # -> out/rig/hero_moves.glb + hero_rootmotion.json
 add-moves out/talk/hero_mouth.glb                                 # a mouth rig: speech goes on with lipsync --add
-add-moves hero_rigged.glb --baked "$KIMODO_HOME/basic" --baked out/moves/knight   # the basic set + custom moves
+add-moves hero_rigged.glb --baked motion/basic --baked out/moves/knight          # the basic set + custom moves
 ```
 
 Without `--baked`, the moves are the basic set (below); `--baked` takes `gen-moves` outputs, repeatable, a later set
-winning a name clash. The input is a `mia-rig` rig (`--fingers --anim none`) or its `lipsync` mouth rig: Mixamo bone
+winning a name clash, and a relative path missing from the current directory is taken from the repo root
+(`motion/basic`). The input is a `mia-rig` rig (`--fingers --anim none`) or its `lipsync` mouth rig: Mixamo bone
 names, a bind close to a T-pose with flat feet, facing +Z. `add_moves.py` (numpy only, ~1 s) writes one glTF
 animation per move and keeps the rest of the GLB as it is; a rig without the Mixamo core bones is an error.
 
@@ -85,10 +86,10 @@ add-moves out/rig/knight_rigged.glb --baked out/moves/knight
   one. `<DIR>/gen/` holds the work (per-move NPZ and gate report); delete it to regenerate everything.
 - Cost: ~1 min GPU per move (~2.5 GB VRAM, one GPU job) plus the Llama-3 text encoder, a CPU service (~16 GB RAM) that
   `gen-moves` starts when something needs generating (1-3 min) and stops afterwards. For a session of runs, start it
-  once and `gen-moves` reuses it:
-  `GRADIO_SERVER_NAME=127.0.0.1 TEXT_ENCODERS_DIR=$KIMODO_HOME/text_encoders TEXT_ENCODER_DEVICE=cpu
-  $KIMODO_HOME/kimenv/bin/python -P -m kimodo.scripts.run_text_encoder_server &` (without `GRADIO_SERVER_NAME` it
-  binds all interfaces).
+  once from the repo root and `gen-moves` reuses it:
+  `GRADIO_SERVER_NAME=127.0.0.1 TEXT_ENCODERS_DIR=$PWD/motion/text_encoders TEXT_ENCODER_DEVICE=cpu
+  motion/kimenv/bin/python -P -m kimodo.scripts.run_text_encoder_server &` (without `GRADIO_SERVER_NAME` it binds all
+  interfaces).
 
 `--json`: `{output, moves, generated, seconds}` or `{error}`. Look at every new move on a character before using it.
 
@@ -120,9 +121,8 @@ stay within ~1° of flat, wrists within ~1.3° of the source bend, and fingers c
 - the Kimodo weights (`nvidia/Kimodo-SOMA-RP-v1.1`, ~1 GB) download on the first generation, when setup bakes
   `basic.json` into `basic/` (~5 min, one GPU job).
 
-`export KIMODO_HOME=<repo>/motion` in the shell profile: godogen's motion docs key on it. The venv is not relocatable
-(editable install, absolute paths in the encoder adapter configs): after moving the repo, delete `kimenv/` and
-`kimodo-practical/text_encoders`, `text_encoders`, then re-run setup.
+The venv is not relocatable (editable install, absolute paths in the encoder adapter configs): after moving the repo,
+delete `kimenv/` and `kimodo-practical/text_encoders`, `text_encoders`, then re-run setup.
 
 Hardware: torch 2.6.0 cu124 covers GPUs before Blackwell; Blackwell (sm_120) needs a CUDA ≥ 12.8 torch build.
 The text encoder runs on the CPU (`TEXT_ENCODER_DEVICE=cpu` in `bin/gen-moves`, ~16 GB RAM) so that the GPU holds
