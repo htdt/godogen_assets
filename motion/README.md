@@ -10,7 +10,7 @@ moves onto a Mixamo rig as ordinary glTF clips. This folder is `KIMODO_HOME`.
 
 ```bash
 add-moves out/rig/hero_rigged.glb                                 # -> out/rig/hero_moves.glb + hero_rootmotion.json
-add-moves out/talk/hero_mouth.glb --speak line.wav -t line.txt    # mouth rig: moves + the "speak" clip
+add-moves out/talk/hero_mouth.glb                                 # a mouth rig: speech goes on with lipsync --add
 add-moves hero_rigged.glb --baked "$KIMODO_HOME/basic" --baked out/moves/knight   # the basic set + custom moves
 ```
 
@@ -19,18 +19,12 @@ winning a name clash. The input is a `mia-rig` rig (`--fingers --anim none`) or 
 names, a bind close to a T-pose with flat feet, facing +Z. `add_moves.py` (numpy only, ~1 s) writes one glTF
 animation per move and keeps the rest of the GLB as it is; a rig without the Mixamo core bones is an error.
 
-Kimodo's SOMA skeleton has nearly the Mixamo layout and the T-pose as its zero pose, so the transfer is direct:
-each bone takes its source joint's world rotation from rest. Two static rest corrections keep it faithful: SOMA's
-T-pose hand bends ~18° off the forearm where rigs bind straight (the baked clips carry the straightened rest), and
-thighs, shins, upper arms and forearms are aimed along the source T-pose once, so a bind that is not an exact T-pose
-does not skew every pose. The root is scaled by the leg-length ratio. Planted feet stay within ~1° of flat, wrists
-within ~1.3° of the source bend, and fingers curl as in the source.
-
 - Clips are in place: hips X/Z stay at bind, height follows the move. `<name>_rootmotion.json` carries the travel
   for the game to move the entity by: `scaleRoot`, and per clip `fps`, `numFrames`, `loop`, `frameData`, `hipY` and
   `pelvisXZ`, the hips' horizontal offset from the first frame, in metres in the character's frame (+z forward,
   +x the character's left).
-- Only the skeleton's Mixamo bones are keyed: a mouth rig's jaw stays free, so speech layers over any move.
+- Only the skeleton's Mixamo bones are keyed: a mouth rig's jaw stays free, so speech layers over any move. The
+  mouth rig's `.face.json` is copied next to the output, where `lipsync --add` finds it.
   Other animations in the input are kept; one with a move's name is replaced.
 - Proportions differ from Kimodo's body, so planted feet can slide a little (toe speed p90 ~0.1 m/s on planted
   frames; walks ~0.4) and hands that reach the face in the source can touch a big-headed character's face. Look at a
@@ -103,6 +97,18 @@ rotations, like any retargeter). A move whose hand must hit a prop point needs k
 (`certify.mjs`, `prebake.mjs` with its constraint IK; README "For agents"), which is also the path for rigs without
 Mixamo names.
 
+## How it works
+
+`gen_moves.py` runs kimodo-practical's `kimogen.py` (best-of-8, numeric gates) and `bake_kimodo.py` in-process,
+starting the text encoder service only when something needs generating.
+
+`add_moves.py` does the transfer. Kimodo's SOMA skeleton has nearly the Mixamo layout and the T-pose as its zero
+pose, so the transfer is direct: each bone takes its source joint's world rotation from rest. Two static rest
+corrections keep it faithful: SOMA's T-pose hand bends ~18° off the forearm where rigs bind straight (the baked clips
+carry the straightened rest), and thighs, shins, upper arms and forearms are aimed along the source T-pose once, so a
+bind that is not an exact T-pose does not skew every pose. The root is scaled by the leg-length ratio. Planted feet
+stay within ~1° of flat, wrists within ~1.3° of the source bend, and fingers curl as in the source.
+
 ## Setup
 
 `../setup.sh motion`, into this folder:
@@ -119,3 +125,7 @@ Mixamo names.
 `export KIMODO_HOME=<repo>/motion` in the shell profile: godogen's motion docs key on it. The venv is not relocatable
 (editable install, absolute paths in the encoder adapter configs): after moving the repo, delete `kimenv/` and
 `kimodo-practical/text_encoders`, `text_encoders`, then re-run setup.
+
+Hardware: torch 2.6.0 cu124 covers GPUs before Blackwell; Blackwell (sm_120) needs a CUDA ≥ 12.8 torch build.
+The text encoder runs on the CPU (`TEXT_ENCODER_DEVICE=cpu` in `bin/gen-moves`, ~16 GB RAM) so that the GPU holds
+only Kimodo (~2.5 GB); with ~16 GB of VRAM to spare, `TEXT_ENCODER_DEVICE=cuda` runs it there.

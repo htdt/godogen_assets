@@ -4,6 +4,23 @@ Free, local generators for [godogen](https://github.com/htdt/godogen) games: ima
 animated characters with talking mouths, sound effects and voice lines. Each tool is a one-shot command in `bin/`
 with its own isolated environment; this repo holds the tools, their interfaces and their docs in one place.
 
+## Principles
+
+1. **Simple.** One tool per task, a minimal setup. Exploration happens elsewhere; only its result lands here.
+2. **Open and local, on a home GPU.** Open-source code and open-weight models, run on the local machine. Everything
+   is tested on an RTX 3060 12 GB, ~200 € second-hand.
+3. **Set up by an agent.** A small GPU needs quantization, a large one has other priorities: no single `setup.sh`
+   can capture every machine and OS. Instead, the setup is a clean manual (the scripts are the tested recipe for the
+   reference machine, the docs say what depends on the hardware), so a Claude Code or Codex agent sets it up
+   quickly on the machine at hand.
+4. **Assets for godogen.** This is godogen's asset part. Its only purpose is to give the gamedev agent the assets a
+   game needs.
+5. **Open parts, lean docs.** Not a monolithic product: when something is missing or broken, the gamedev agent can
+   tune the part. Yet the internals stay out of its way, so it uses the tools quickly without polluting its context:
+   this README and the top of a part's README are enough to use a tool.
+
+## Tools
+
 | Command | Does | Runs on | Doc |
 |---|---|---|---|
 | `qwen-image` | text → PNG, `rgba` → transparent PNG, `edit` with reference images (Qwen-Image-2.1) | GPU | [image/](image/README.md) |
@@ -15,6 +32,9 @@ with its own isolated environment; this repo holds the tools, their interfaces a
 | `stable-audio` | text → sound effect or seamless ambience loop (Stable Audio 3 small-sfx) | GPU | [sfx/](sfx/README.md) |
 | `qwen-tts` | text → voice line, from a voice description or a reference clip (Qwen3-TTS 1.7B) | GPU | [voice/](voice/README.md) |
 | `asset-blender` | runs a check script (`tools/`, `lipsync/`) in headless Blender 4.5 LTS | CPU | [below](#checking-results) |
+
+A part's README starts with what using the tool needs: options, what comes out, limits. Its last sections, `How it
+works` and `Setup`, are for tuning, fixing or installing the part.
 
 ## A character, start to finish
 
@@ -34,7 +54,8 @@ add-moves out/rig/hero_rigged.glb --baked "$KIMODO_HOME/basic" --baked out/moves
 qwen-tts design "Halt, traveller." --voice "Male, around 40, stern castle guard" -o line.wav
 echo "Halt, traveller." > line.txt
 lipsync out/rig/hero_rigged.glb line.wav -t line.txt -o out/talk/  # -> hero_mouth.glb, hero_speak.glb
-add-moves out/talk/hero_mouth.glb --speak line.wav -t line.txt     # -> out/talk/hero_moves.glb
+add-moves out/talk/hero_mouth.glb                                  # -> out/talk/hero_moves.glb (jaw left free)
+lipsync --add speak out/talk/hero_moves.glb line.wav -t line.txt   # + the "speak" clip, in place
 ```
 
 Props stop after `gen3d`. Stock animation instead of Kimodo moves: `mia-rig --anim clip.fbx` with a Mixamo clip.
@@ -58,11 +79,15 @@ Props stop after `gen3d`. Stock animation instead of Kimodo moves: `mia-rig --an
 
 ## Setup
 
-Needs: Linux x86-64; NVIDIA GPU with ≥ 12 GB VRAM and driver ≥ 580 (CUDA 13 wheels in image/voice, CUDA 12.x
-elsewhere); ≥ 24 GB RAM; ~130 GB free disk during setup; `git curl unzip gcc g++ ffmpeg`,
-[uv](https://docs.astral.sh/uv/) and [micromamba](https://mamba.readthedocs.io/) on `PATH`; a Hugging Face token
-(`hf auth login`) whose account accepted the [Stable Audio 3 small-sfx](https://huggingface.co/stabilityai/stable-audio-3-small-sfx)
-licence (the only gated model; the other gated repos are replaced by public mirrors).
+For the agent that sets this up. `setup.sh` is the tested recipe for the reference machine; on other hardware,
+follow it part by part and adapt what the hardware changes (below). Parts are independent: install the ones the
+games need (`blender` serves `rig`, `lipsync` and the checks in `tools/`).
+
+Reference machine: Linux x86-64; RTX 3060 12 GB, driver ≥ 580; 24 GB RAM; ~130 GB free disk during setup;
+`git curl unzip gcc g++ ffmpeg`, [uv](https://docs.astral.sh/uv/) and [micromamba](https://mamba.readthedocs.io/)
+on `PATH`; a Hugging Face token (`hf auth login`) whose account accepted the
+[Stable Audio 3 small-sfx](https://huggingface.co/stabilityai/stable-audio-3-small-sfx) licence (the only gated
+model; the other gated repos are replaced by public mirrors).
 
 ```bash
 git clone <this repo> godogen_assets && cd godogen_assets
@@ -72,9 +97,20 @@ echo "export KIMODO_HOME=$PWD/motion" >> ~/.bashrc   # (and ~/.zshrc) godogen's 
 ```
 
 `setup.sh` is idempotent (re-run after a failure) and pins the tested upstream commits and package versions; each
-part's README says what it installs. Versions are for Ampere/Ada GPUs: a newer GPU generation
-(sm_120+) needs newer torch/CUDA pins in `mesh/` and `motion/`. Envs are not relocatable: after moving the repo,
-delete the `.venv` / `.conda` / `motion/kimenv` folders and re-run `setup.sh`.
+part's README (Setup) says what it installs and which choices are tied to the hardware. Envs are not relocatable:
+after moving the repo, delete the `.venv` / `.conda` / `motion/kimenv` folders and re-run `setup.sh`.
+
+What depends on the hardware:
+
+- **GPU generation, driver.** `image` and `voice` use torch 2.14's CUDA 13 build (driver ≥ 580; an older driver
+  needs a CUDA 12.x build). `mesh` (CUDA 12.4 toolkit, torch 2.6, a flash-attn wheel), `motion` (torch 2.6 cu124)
+  and `sfx` (torch 2.7.1 cu126) are pinned for GPUs before Blackwell; Blackwell (sm_120) needs CUDA ≥ 12.8 builds
+  there. `mesh` compiles its CUDA extensions for the GPU it finds. `rig` runs on the CPU whatever the GPU.
+- **VRAM.** 12 GB is the target: `image` quantizes (int8 DiT, NF4 text encoder, CPU offload) and `mesh` runs
+  `lowmem.py`'s exact patches; their READMEs give the knobs for less or more. `gen-moves` needs ~2.5 GB, `qwen-tts`
+  ~4.6 GB.
+- **RAM.** 24 GB fits the largest users one at a time: `gen-moves`' Llama-3 text encoder on the CPU (~16 GB) and
+  `gen3d` (peaks ~16 GB). With ~16 GB of VRAM to spare, the encoder can run on the GPU (motion README, Setup).
 
 Check the install:
 

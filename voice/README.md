@@ -49,3 +49,5 @@ peak_vram_gb}` (batch: `{outputs: [...], seconds_total, peak_vram_gb}`) or `{"er
 
 `../setup.sh voice`: uv venv (Python 3.12, torch 2.14, `qwen-tts` pinned from git). The first run of each mode
 downloads its model (~4.5 GB each) into the Hugging Face cache. No flash-attention; PyTorch SDPA is used.
+
+Hardware: the CUDA 13 build of torch needs driver ≥ 580; with an older driver, install a CUDA 12.x build of torch.

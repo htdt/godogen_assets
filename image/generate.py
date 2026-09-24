@@ -58,7 +58,11 @@ from PIL import Image  # noqa: E402
 
 MODEL_ID = "Qwen/Qwen-Image-2.1"
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-LOCAL_QUANTIZED = os.path.join(PROJECT_DIR, "models", "qwen-image-2.1-int8")
+
+
+def local_quantized(dit_quant: str) -> str:
+    """The pre-quantized folder quantize.py writes for this transformer precision."""
+    return os.path.join(PROJECT_DIR, "models", f"qwen-image-2.1-{dit_quant}")
 
 
 def log(*args, **kwargs) -> None:
@@ -72,8 +76,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("prompt", help="Text prompt.")
     p.add_argument("--model", default=None,
-                   help="Model repo id or local folder. Default: the pre-quantized folder written by quantize.py "
-                        f"({LOCAL_QUANTIZED}) if it exists, else {MODEL_ID} quantized at load time.")
+                   help="Model repo id or local folder. Default: the pre-quantized folder quantize.py wrote for "
+                        f"--dit-quant ({local_quantized('<dit-quant>')}) if it exists, else {MODEL_ID} quantized "
+                        "at load time.")
     p.add_argument("--negative-prompt", default=None, help="Negative prompt (only used when --cfg > 1).")
     p.add_argument("--cfg", type=float, default=1.0,
                    help="true_cfg_scale. Qwen-Image-2.1 is designed to run without guidance (1.0). "
@@ -193,7 +198,8 @@ def load_pipeline(args: argparse.Namespace):
     t0 = time.time()
     patch_bnb_int8_module_moves()  # harmless when no int8 layers are present
 
-    model = args.model or (LOCAL_QUANTIZED if os.path.isdir(LOCAL_QUANTIZED) else MODEL_ID)
+    local = local_quantized(args.dit_quant)
+    model = args.model or (local if os.path.isdir(local) else MODEL_ID)
 
     if os.path.isdir(model) and is_prequantized(model):
         # Pre-quantized folder: the bitsandbytes config is stored with each component. bitsandbytes places

@@ -42,3 +42,6 @@ stable-audio info
 `../setup.sh sfx`: uv venv (Python 3.12, torch 2.7.1 cu126, `stable-audio-3` pinned from git). The weights (~1.5 GB,
 including the T5Gemma text encoder) are gated: accept the licence on the model page with the Hugging Face account
 whose token is on the machine; the first run downloads them. The "flash_attn not installed" notices are harmless.
+
+Hardware: torch 2.7.1 cu126 covers GPUs before Blackwell; Blackwell (sm_120) needs its cu128 build. Without a
+usable GPU, `--device cpu` works.

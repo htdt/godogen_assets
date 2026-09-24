@@ -97,7 +97,7 @@ def cmd_info(ns: argparse.Namespace) -> int:
         "cuda_available": torch.cuda.is_available(),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "vram_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1) if torch.cuda.is_available() else None,
-        "prequantized_model": generate.LOCAL_QUANTIZED if os.path.isdir(generate.LOCAL_QUANTIZED) else None,
+        "prequantized_models": [p for p in map(generate.local_quantized, ("int8", "nf4")) if os.path.isdir(p)],
         "hf_model": generate.MODEL_ID,
     }
     try:

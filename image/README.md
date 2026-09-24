@@ -24,7 +24,7 @@ Options for `generate` / `rgba` / `edit`:
 | `--steps N` | 40 | |
 | `--seed N` | random | |
 | `--cfg F` / `--negative TEXT` | 1.0 | cfg > 1 enables the negative prompt and doubles compute; the model is meant to run at 1.0 |
-| `--quant int8\|nf4` | int8 | transformer precision; nf4 is smaller, a bit faster, slightly worse |
+| `--quant int8\|nf4` | int8 | transformer precision; nf4 is smaller, a bit faster, slightly worse (see How it works) |
 | `--json` | | `{output, width, height, mode, prompt, seed, steps, cfg, inputs, dit_quant, te_quant, seconds, peak_vram_gb}` or `{"error": ...}` |
 
 2K sizes from the model card: 2048x2048, 2400x1792, 1792x2400, 2528x1696, 1696x2528, 2752x1536, 1536x2752.
@@ -40,12 +40,14 @@ Options for `generate` / `rgba` / `edit`:
   `--quant nf4`.
 - Text inside the image (signs, labels, UI captions) renders legibly.
 
-## How it fits in 12 GB
+## How it works
 
-In bf16 the pipeline needs ~40 GB VRAM (7B DiT 14 GB, Qwen3-VL 8B text encoder 17.5 GB, VAE 1.4 GB). `generate.py`
-loads the DiT as int8 weight-only (torchao, bf16 compute) and the text encoder as NF4 (bitsandbytes), with
-model-level CPU offload (one component on the GPU at a time). `quantize.py` does this once into
-`models/qwen-image-2.1-int8` (~14.5 GB), which every call then loads directly.
+In bf16 the pipeline needs ~40 GB VRAM (7B DiT 14 GB, Qwen3-VL 8B text encoder 17.5 GB, VAE 1.4 GB). To fit 12 GB,
+`generate.py` loads the DiT as int8 weight-only (torchao, bf16 compute) and the text encoder as NF4 (bitsandbytes),
+with model-level CPU offload (one component on the GPU at a time). `quantize.py` does this once into
+`models/qwen-image-2.1-int8` (~14.5 GB), which every call then loads directly. `--quant nf4` loads
+`models/qwen-image-2.1-nf4` once `image/.venv/bin/python image/quantize.py --dit-quant nf4` has written it; until
+then it quantizes the Hugging Face weights on every load.
 
 Never quantize the DiT with bitsandbytes LLM.int8 (`load_in_8bit`): its kernel casts activations to fp16, which
 overflows on this DiT and returns the same noise for every prompt. NF4 and torchao int8 are clean.
@@ -59,4 +61,9 @@ With more VRAM, the underlying script runs other precisions straight from the Hu
 `../setup.sh image`: uv venv (Python 3.12, torch 2.14 with CUDA 13, diffusers pinned from git because the 2.1
 pipeline is not in a release yet), the ~33 GB download into the Hugging Face cache, and the one-time quantization.
 Once `models/qwen-image-2.1-int8` exists, the bf16 download can be deleted from the cache
-(`image/.venv/bin/hf cache rm model/Qwen/Qwen-Image-2.1`), unless you want the `--model Qwen/Qwen-Image-2.1` route above.
+(`image/.venv/bin/hf cache rm model/Qwen/Qwen-Image-2.1`), unless you want the `--model Qwen/Qwen-Image-2.1` route
+above or an nf4 folder still to be made.
+
+Hardware: the CUDA 13 build needs driver ≥ 580; with an older driver, install a CUDA 12.x build of torch. The
+quantization and offload are what 12 GB needs; with less VRAM, `--quant nf4` or `generate.py`'s
+`--offload sequential`; with ~40 GB, the bf16 route above.

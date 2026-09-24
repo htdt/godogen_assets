@@ -39,7 +39,7 @@ Poses other than T/A work (MIA resets them), but arms away from the body rig bes
 Check a rig: `asset-blender tools/pose_test.py -- out/rig/hero_rigged.glb poses.png` (rest, arms down, arms up,
 guard, squat, twist + kick) and, for a clip, `asset-blender tools/render_anim.py -- out/rig/hero_anim.glb anim.png`.
 
-## Files
+## How it works
 
 `mia_rig.py` drives the functions behind MIA's Gradio demo headless, so results match the demo. `rigops.py`
 (upright spine, shared with MIA's bpy 4.3), `normalize_rig.py` (grounding; optional `--upright-spine`,
@@ -53,3 +53,6 @@ with Python 3.11 and MIA's requirements (torch 2.1.2 cu121, PyG, pytorch3d, bpy 
 `jasongzy/Make-It-Animatable` (~2.5 GB, into the checkout); FBX2glTF. MIA's skeleton templates ship in the gated
 `jasongzy/Mixamo` dataset, so `make_templates.py` rebuilds them from the Mixamo skeleton inside the bundled
 "Standard Run.fbx".
+
+Hardware: none beyond the CPU. MIA takes the GPU when it sees one, at no gain in speed, so `bin/mia-rig` hides it
+(`CUDA_VISIBLE_DEVICES=`): the cu121 torch works whatever the GPU, and the GPU stays free for the GPU tools.

@@ -53,10 +53,10 @@ Writes `<out>/<name>.glb`, `<name>_preview.png` (front/right/back/left, PBR-shad
 - Time grows with surface detail: at 1024, a character takes a few minutes and a leafy tree up to ~10; export adds
   seconds. Host RAM peaks around 16 GB, so keep other RAM-heavy jobs off while it runs.
 
-## The 12 GB patches (`lowmem.py`)
+## How it works
 
-Upstream asks for a 24 GB GPU. Sampling fits in 3-6 GB with TRELLIS.2's `low_vram` offloading; decoding and export
-did not:
+`gen3d.py` runs TRELLIS.2's image-to-3D pipeline and GLB export. Upstream asks for a 24 GB GPU; `lowmem.py` patches
+it to fit 12 GB. Sampling fits in 3-6 GB with TRELLIS.2's `low_vram` offloading; decoding and export did not:
 
 1. The last 512³ → 1024³ upsampling block of both sparse VAE decoders runs on x-axis slabs with a 2-voxel halo, and
    the ConvNeXt MLPs run in chunks. The result is bit-identical (`test_lowmem.py` checks it on a saved latent).
@@ -81,3 +81,9 @@ The official DINOv3 and RMBG-2.0 repos are gated, so gen3d uses the ungated byte
 `camenduru/dinov3-vitl16-pretrain-lvd1689m` and the MIT `ZhengPeng7/BiRefNet` (same architecture as RMBG-2.0)
 instead; override with `TRELLIS_DINOV3=` / `TRELLIS_REMBG=`. Two pins matter: `transformers` 4.57 (5.x changed
 DINOv3's layer layout) and `opencv-python-headless` < 5 (5.x cannot read the EXR environment map of the preview).
+
+Hardware: the CUDA 12.4 toolkit, torch 2.6.0 cu124 and the flash-attn wheel (CUDA 12, torch 2.6, Python 3.10) go
+together and cover GPUs before Blackwell; Blackwell (sm_120) needs a CUDA ≥ 12.8 toolkit, a matching torch and
+flash-attn, and the extensions rebuilt. The extensions compile for the GPU `nvidia-smi` reports
+(`TORCH_CUDA_ARCH_LIST`); `MAX_JOBS=4` limits the compile's RAM. The patches are exact, so they stay on with more
+VRAM; with less, `--type 512` and a lower `--max-tokens` are the knobs.

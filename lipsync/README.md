@@ -8,7 +8,8 @@ generic teeth.
 ```bash
 lipsync out/rig/hero_rigged.glb line.wav -t line.txt -o out/talk/        # mouth rig + "speak" clip, ~2 min
 lipsync --add line_02 out/talk/hero_speak.glb line2.wav -t line2.txt     # one more clip on a mouth-rigged GLB
-add-moves out/talk/hero_mouth.glb --speak line.wav -t line.txt           # Kimodo moves + "speak" in one GLB
+add-moves out/talk/hero_mouth.glb                                        # Kimodo moves on the mouth rig ...
+lipsync --add speak out/talk/hero_moves.glb line.wav -t line.txt         # ... + "speak" in one GLB
 ```
 
 Voice lines come from `qwen-tts` (keep the transcript: `-t` helps Rhubarb). For several lines of one character, clone
