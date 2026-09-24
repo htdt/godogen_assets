@@ -5,7 +5,7 @@ Image → textured GLB (PBR base colour + metallic/roughness) with [TRELLIS.2-4B
 
 ```bash
 gen3d hero.png -o out/                              # 1024_cascade: best detail, ~480k triangles, 2048² textures
-gen3d --faces 30000 --tex 1024 crate.png -o out/    # game budget (= Tripo's face_limit=30000)
+gen3d --faces 30000 --tex 1024 crate.png -o out/    # game budget
 gen3d --type 512 --no-preview *.png -o drafts/      # 3-7x faster, for prompt trials and background props
 gen3d --json a.png b.png -o out/                    # images in one call share the model load; one JSON line each
 ```

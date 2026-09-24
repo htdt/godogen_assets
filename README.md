@@ -134,14 +134,6 @@ python3 tools/glb_info.py hero_moves.glb                           # meshes, mor
 
 `gen3d` also writes `<name>_preview.png`, and `lipsync` writes a check sheet and a video.
 
-## Instead of Tripo (godogen asset-gen)
-
-| Tripo CLI | Local |
-|---|---|
-| `tripo make ref.png -p face_limit=30000` | `gen3d ref.png --faces 30000 --tex 1024` (RGBA input from `qwen-image rgba`, no solid background; no `auto_size`: scale in the engine) |
-| `--then rig-check,rig` | `mia-rig x.glb --fingers --anim none` (humanoids only) |
-| `tripo anim retarget --animation preset:biped:*` | `mia-rig --anim clip.fbx` (Mixamo clips) or `add-moves` (Kimodo moves; `gen-moves` for any other) |
-
 ## Layout
 
 ```

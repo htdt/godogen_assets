@@ -42,8 +42,7 @@ guard, squat, twist + kick) and, for a clip, `asset-blender tools/render_anim.py
 ## How it works
 
 `mia_rig.py` drives the functions behind MIA's Gradio demo headless, so results match the demo. `rigops.py`
-(upright spine, shared with MIA's bpy 4.3), `normalize_rig.py` (grounding; optional `--upright-spine`,
-`--straighten-legs`, `--feet-forward` for rigs from elsewhere) and `merge_anim.py` run in Blender 4.5.
+(upright spine, shared with MIA's bpy 4.3), `normalize_rig.py` (grounding) and `merge_anim.py` run in Blender 4.5.
 `make_templates.py` rebuilds MIA's Mixamo skeleton templates.
 
 ## Setup

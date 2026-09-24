@@ -7,7 +7,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 cd "$root"
-BLENDER_VERSION=4.5.14   # LTS; used headless by mia-rig, lipsync, add-moves and tools/
+BLENDER_VERSION=4.5.14   # LTS; used headless by mia-rig, lipsync and tools/
 
 setup_blender() {
   [[ -x deps/blender/blender ]] && return

@@ -92,10 +92,8 @@ add-moves out/rig/knight_rigged.glb --baked out/moves/knight
 
 `--json`: `{output, moves, generated, seconds}` or `{error}`. Look at every new move on a character before using it.
 
-`add-moves` does not land authored hand/foot targets exactly on a character with other proportions (it transfers
-rotations, like any retargeter). A move whose hand must hit a prop point needs kimodo-practical's own Stage 1/3
-(`certify.mjs`, `prebake.mjs` with its constraint IK; README "For agents"), which is also the path for rigs without
-Mixamo names.
+`add-moves` transfers rotations, like any retargeter, so hand and foot targets authored in `constraints` do not land
+exactly on a character with other proportions.
 
 ## How it works
 
