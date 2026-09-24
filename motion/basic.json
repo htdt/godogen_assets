@@ -1,0 +1,37 @@
+{
+ "fps": 30,
+ "stance": "idle",
+ "moves": [
+  {
+   "name": "idle",
+   "prompt": "A person stands relaxed in place, breathing calmly and shifting their weight slightly.",
+   "duration": 4.0,
+   "loop": true,
+   "travel": "in_place"
+  },
+  {
+   "name": "walk",
+   "prompt": "A person walks forward at a normal pace.",
+   "duration": 4.0,
+   "loop": true,
+   "travel": "fwd"
+  },
+  {
+   "name": "run",
+   "prompt": "A person runs forward at a steady pace.",
+   "duration": 3.0,
+   "loop": true,
+   "travel": "fwd",
+   "jitter_max": 0.03
+  },
+  {
+   "name": "jump",
+   "prompt": "A person bends their knees and jumps straight up into the air, then lands on their feet and stands relaxed.",
+   "duration": 2.5,
+   "travel": "in_place",
+   "stance_bookend": true,
+   "apex": {"kind": "root_rise", "min": 0.25},
+   "jitter_max": 0.03
+  }
+ ]
+}

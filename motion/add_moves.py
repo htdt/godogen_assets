@@ -1,7 +1,7 @@
 """
-add_moves.py: put a baked Kimodo move set onto a Mixamo-named rig as ordinary glTF animations. Run by bin/add-moves.
+add_moves.py: put baked Kimodo move sets onto a Mixamo-named rig as ordinary glTF animations. Run by bin/add-moves.
 
-    python add_moves.py RIG.glb BAKED_DIR OUT.glb ROOTMOTION.json
+    python add_moves.py RIG.glb OUT.glb ROOTMOTION.json BAKED_DIR [BAKED_DIR ...]
 
 Kimodo's SOMA skeleton shares the Mixamo layout and the T-pose zero pose, so the transfer is direct: every mapped
 bone takes its source joint's world rotation from rest, applied to the bone's own bind. Two rest corrections, both
@@ -12,7 +12,7 @@ bind as neutral: flat and straight on both skeletons. The root is scaled by the 
 
 Clips are in place (hips X/Z at bind, height kept); the horizontal hips path goes to ROOTMOTION.json for the game
 to move the entity. Only mapped bones are keyed (a mouth rig's jaw stays free for speech); other animations in the
-input are kept, one with a move's name is replaced. Needs numpy only.
+input are kept, one with a move's name is replaced; across move sets, a later set wins a name clash. Needs numpy only.
 """
 import os
 import re
@@ -131,7 +131,7 @@ def node_matrix(n):
     return m
 
 
-def main(rig_path, baked, out_path, rm_path):
+def main(rig_path, out_path, rm_path, *baked_dirs):
     gltf, blob = read_glb(rig_path)
     nodes = gltf['nodes']
     parent = {c: i for i, n in enumerate(nodes) for c in n.get('children', [])}
@@ -163,13 +163,14 @@ def main(rig_path, baked, out_path, rm_path):
     keyed = [i for i in order if strip(nodes[i]['name']) in MAP]
     char_leg = pos_w[hips][1] - (pos_w[by['LeftFoot']][1] + pos_w[by['RightFoot']][1]) / 2
 
-    manifest = json.load(open(os.path.join(baked, 'manifest.json')))
-    moves = manifest['moves'] if isinstance(manifest, dict) else manifest
-    names = {m['name'] for m in moves}
-    anims = [a for a in gltf.get('animations', []) if a.get('name') not in names]
+    moves = {}  # name -> (baked dir, manifest entry)
+    for baked in baked_dirs:
+        manifest = json.load(open(os.path.join(baked, 'manifest.json')))
+        moves.update((m['name'], (baked, m)) for m in (manifest['moves'] if isinstance(manifest, dict) else manifest))
+    anims = [a for a in gltf.get('animations', []) if a.get('name') not in moves]
     rootmotion = {'scaleRoot': None, 'clips': {}}
 
-    for mv in moves:
+    for baked, mv in moves.values():
         clip = json.load(open(os.path.join(baked, mv.get('file', mv['name'] + '.json'))))
         idx = {n: k for k, n in enumerate(clip['names'])}
         # finger joints hang off the straightened hand frame: they take the hand's rest
@@ -235,8 +236,8 @@ def main(rig_path, baked, out_path, rm_path):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 5:
-        sys.exit('usage: python add_moves.py RIG.glb BAKED_DIR OUT.glb ROOTMOTION.json')
+    if len(sys.argv) < 5:
+        sys.exit('usage: python add_moves.py RIG.glb OUT.glb ROOTMOTION.json BAKED_DIR [BAKED_DIR ...]')
     try:
         main(*sys.argv[1:])
     except (ValueError, KeyError, OSError) as e:

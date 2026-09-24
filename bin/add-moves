@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# add-moves: put a baked Kimodo move set onto a rigged character (motion/README.md). CPU only, ~1 s.
+# add-moves: put baked Kimodo move sets onto a rigged character (motion/README.md). CPU only, ~1 s.
 #
-#   add-moves RIG.glb [--baked DIR] [-o OUT.glb] [--speak LINE.wav [-t LINE.txt]] [--json]
+#   add-moves RIG.glb [--baked DIR ...] [-o OUT.glb] [--speak LINE.wav [-t LINE.txt]] [--json]
 #
 # RIG.glb is a mia-rig or lipsync output (Mixamo names, T-pose bind, facing +Z). motion/add_moves.py writes one glTF
 # animation per move (in place) -> OUT.glb + <name>_rootmotion.json (mouth rigs also get OUT's .face.json for
 # lipsync --add); with --speak, the lip-sync clip "speak" on top (the moves never key the jaw).
-# Default move set: motion/kimodo-practical/kimodo/out/web_mk (the 17-move MK set, see motion/README.md).
+# --baked (repeatable, a gen-moves output; a later set wins a name clash). Default: motion/basic (idle, walk, run, jump).
 # Default OUT: <RIG dir>/<name>_moves.glb (<name> = RIG name without _rigged / _mouth).
 # stdout: OUT path (or a JSON object with --json); progress on stderr; exit 0 / 1.
 set -euo pipefail
@@ -17,10 +17,10 @@ BLENDER=${BLENDER:-$root/deps/blender/blender}
 [[ -x $PY ]] || { echo "add-moves: not installed, run $root/setup.sh motion" >&2; exit 1; }
 unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
 
-baked="$root/motion/kimodo-practical/kimodo/out/web_mk"; out=""; wav=""; text=""; json=0; pos=()
+baked=(); out=""; wav=""; text=""; json=0; pos=()
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --baked) baked=$(readlink -f "$2"); shift 2;;
+    --baked) baked+=("$(readlink -f "$2")"); shift 2;;
     -o) out=$2; shift 2;;
     --speak) wav=$(readlink -f "$2"); shift 2;;
     -t) text=$(readlink -f "$2"); shift 2;;
@@ -30,16 +30,19 @@ while [[ $# -gt 0 ]]; do
     *) pos+=("$1"); shift;;
   esac
 done
-[[ ${#pos[@]} -eq 1 ]] || { echo "usage: add-moves RIG.glb [--baked DIR] [-o OUT.glb] [--speak LINE.wav [-t LINE.txt]]" >&2; exit 1; }
+[[ ${#pos[@]} -eq 1 ]] || { echo "usage: add-moves RIG.glb [--baked DIR ...] [-o OUT.glb] [--speak LINE.wav [-t LINE.txt]]" >&2; exit 1; }
 rig=$(readlink -f "${pos[0]}")
-[[ -f $baked/manifest.json ]] || { echo "add-moves: no baked move set at $baked (motion/README.md)" >&2; exit 1; }
+[[ ${#baked[@]} -gt 0 ]] || baked=("$root/motion/basic")
+for d in "${baked[@]}"; do
+  [[ -f $d/manifest.json ]] || { echo "add-moves: no baked move set at $d (gen-moves, motion/README.md)" >&2; exit 1; }
+done
 dir=$(dirname "$rig"); name=$(basename "$rig" .glb); name=${name%_rigged}; name=${name%_mouth}
 out=${out:-$dir/${name}_moves.glb}; mkdir -p "$(dirname "$out")"; out=$(readlink -f "$out")
 rootmotion="${out%.glb}_rootmotion.json"; rootmotion=${rootmotion/_moves_rootmotion/_rootmotion}
 face="${rig%.glb}.face.json"
 [[ -n $wav && ! -f $face ]] && { echo "add-moves: --speak needs a mouth rig (lipsync output with $face)" >&2; exit 1; }
 
-"$PY" -P "$root/motion/add_moves.py" "$rig" "$baked" "$out" "$rootmotion" >&2
+"$PY" -P "$root/motion/add_moves.py" "$rig" "$out" "$rootmotion" "${baked[@]}" >&2
 
 if [[ -f $face ]]; then
   cp "$face" "${out%.glb}.face.json"   # lipsync --add finds it next to the GLB
@@ -54,8 +57,8 @@ if [[ -f $face ]]; then
 fi
 
 if [[ $json = 1 ]]; then
-  "$PY" -c 'import json, sys; print(json.dumps(dict(zip(["output", "rootmotion", "baked"], sys.argv[1:]))))' \
-    "$out" "$rootmotion" "$baked"
+  "$PY" -c 'import json, sys; print(json.dumps({"output": sys.argv[1], "rootmotion": sys.argv[2], "baked": sys.argv[3:]}))' \
+    "$out" "$rootmotion" "${baked[@]}"
 else
   echo "$out"
 fi

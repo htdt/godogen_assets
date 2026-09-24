@@ -9,7 +9,8 @@ with its own isolated environment; this repo holds the tools, their interfaces a
 | `qwen-image` | text → PNG, `rgba` → transparent PNG, `edit` with reference images (Qwen-Image-2.1) | GPU | [image/](image/README.md) |
 | `gen3d` | image → textured GLB (TRELLIS.2-4B) | GPU | [mesh/](mesh/README.md) |
 | `mia-rig` | humanoid GLB → Mixamo-rigged GLB, optionally + a Mixamo clip (Make-It-Animatable) | CPU | [rig/](rig/README.md) |
-| `add-moves` | rigged GLB → GLB with a Kimodo move set (17 fighting moves by default) + `rootmotion.json` | CPU | [motion/](motion/README.md) |
+| `gen-moves` | move spec (text prompts) → baked humanoid move set, best-of-8 per move with numeric gates (Kimodo) | GPU | [motion/](motion/README.md) |
+| `add-moves` | rigged GLB → GLB with Kimodo moves (idle, walk, run, jump, or `gen-moves` sets) + `rootmotion.json` | CPU | [motion/](motion/README.md) |
 | `lipsync` | rigged GLB + voice line → mouth rig (jaw, lips, teeth) + lip-synced `speak` clip | CPU | [lipsync/](lipsync/README.md) |
 | `stable-audio` | text → sound effect or seamless ambience loop (Stable Audio 3 small-sfx) | GPU | [sfx/](sfx/README.md) |
 | `qwen-tts` | text → voice line, from a voice description or a reference clip (Qwen3-TTS 1.7B) | GPU | [voice/](voice/README.md) |
@@ -25,6 +26,10 @@ gen3d hero.png --faces 30000 --tex 1024 -o out/                    # -> out/hero
 mia-rig out/hero.glb --fingers --anim none -o out/rig/             # -> out/rig/hero_rigged.glb
 add-moves out/rig/hero_rigged.glb                                  # -> out/rig/hero_moves.glb + hero_rootmotion.json
 
+# custom moves: a spec of prompts (motion/README.md) -> a move set, on top of the basic one
+gen-moves hero_moves.json -o out/moves/hero                        # -> out/moves/hero/
+add-moves out/rig/hero_rigged.glb --baked "$KIMODO_HOME/basic" --baked out/moves/hero
+
 # talking: voice line -> mouth rig -> moves + speech in one GLB
 qwen-tts design "Halt, traveller." --voice "Male, around 40, stern castle guard" -o line.wav
 echo "Halt, traveller." > line.txt
@@ -39,8 +44,8 @@ Props stop after `gen3d`. Stock animation instead of Kimodo moves: `mia-rig --an
 - **Output contract**, every command: stdout carries only the output path(s), or with `--json` one JSON object per
   result (`{"error": ...}` on failure); progress goes to stderr; exit 0 on success, 1 on failure. Keep stderr in a
   file and read it only on failure.
-- **One GPU job at a time.** `qwen-image`, `gen3d`, `stable-audio`, `qwen-tts` and `motion/bake_mk.sh` each load a
-  model onto the GPU; two at once run out of memory. `mia-rig`, `add-moves` and `lipsync` run on the CPU (lipsync
+- **One GPU job at a time.** `qwen-image`, `gen3d`, `stable-audio`, `qwen-tts` and `gen-moves` each load a model
+  onto the GPU; two at once run out of memory. `mia-rig`, `add-moves` and `lipsync` run on the CPU (lipsync
   renders its check images briefly on the GPU) and can overlap with a GPU job.
 - **Minutes, not seconds.** Each call loads its model and exits. `qwen-image` (1024², 40 steps) and `gen3d` take
   minutes per asset, longer than common shell-tool timeouts: set a long timeout or run in the background, and time
@@ -77,6 +82,7 @@ Check the install:
 qwen-image info && stable-audio info && qwen-tts info
 qwen-image rgba --resolution 512 --steps 10 "a red apple" -o /tmp/apple.png
 gen3d --type 512 --no-preview /tmp/apple.png -o /tmp/gen3d && mia-rig --help >/dev/null && add-moves --help
+ls "$KIMODO_HOME/basic/manifest.json"                              # the basic move set, baked by setup
 ```
 
 ## Checking results
@@ -86,7 +92,7 @@ You can't look at a GLB directly, so render it:
 ```bash
 asset-blender tools/render_glb.py -- model.glb renders/            # 4 textured + 4 clay views, mesh stats JSON
 asset-blender tools/pose_test.py -- hero_rigged.glb poses.png      # 6 stress poses of a rig (skinning check)
-asset-blender tools/render_anim.py -- hero_moves.glb kick.png --action kick_high   # frames of one clip
+asset-blender tools/render_anim.py -- hero_moves.glb jump.png --action jump        # frames of one clip
 python3 tools/glb_info.py hero_moves.glb                           # meshes, morph targets, skins, clips, bytes
 ```
 
@@ -98,7 +104,7 @@ python3 tools/glb_info.py hero_moves.glb                           # meshes, mor
 |---|---|
 | `tripo make ref.png -p face_limit=30000` | `gen3d ref.png --faces 30000 --tex 1024` (RGBA input from `qwen-image rgba`, no solid background; no `auto_size`: scale in the engine) |
 | `--then rig-check,rig` | `mia-rig x.glb --fingers --anim none` (humanoids only) |
-| `tripo anim retarget --animation preset:biped:*` | `mia-rig --anim clip.fbx` (Mixamo clips) or `add-moves` (Kimodo move set) |
+| `tripo anim retarget --animation preset:biped:*` | `mia-rig --anim clip.fbx` (Mixamo clips) or `add-moves` (Kimodo moves; `gen-moves` for any other) |
 
 ## Layout
 
@@ -107,7 +113,8 @@ bin/       the commands (thin launchers into each part's environment)
 image/     qwen-image    cli.py, generate.py (quantized pipeline), quantize.py
 mesh/      gen3d         gen3d.py, lowmem.py (the 12 GB patches for TRELLIS.2), test_lowmem.py
 rig/       mia-rig       mia_rig.py, Blender rig scripts (normalize_rig, merge_anim, rigops), make_templates.py
-motion/    add-moves     KIMODO_HOME: add_moves.py (the transfer), setup.sh, bake_mk.sh (Kimodo, kimodo-practical)
+motion/    gen-moves     KIMODO_HOME: gen_moves.py (Kimodo via kimodo-practical), basic.json (the default set)
+           add-moves     add_moves.py (the transfer)
 lipsync/   lipsync       mouth_rig.py, lipsync.py, face_landmarks.py, check renders (face_test, hole_check)
 sfx/       stable-audio  cli.py
 voice/     qwen-tts      cli.py

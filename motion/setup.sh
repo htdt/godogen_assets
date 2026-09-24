@@ -5,7 +5,8 @@
 #                      scripts (-P: from this folder, the kimodo/ checkout would shadow the installed package)
 #   kimodo-practical/  the generation lib (pinned): kimogen.py (prompts, constraints, gated best-of-N) + bake
 #   text_encoders/     Llama-3 encoder mirror: symlinks into the HF cache (~16 GB download), no gated access needed
-# Then bakes the default MK move set (bake_mk.sh) unless it exists. Needs git and cmake-capable build tools.
+# Then bakes add-moves' default move set, basic.json -> basic/ (gen-moves, incremental: a no-op when unchanged).
+# Needs git and cmake-capable build tools.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
@@ -32,4 +33,4 @@ if [[ ! -e text_encoders ]]; then
 fi
 echo "motion: ok ($(kimenv/bin/python -P -c 'import kimodo, torch; print("torch", torch.__version__, "cuda", torch.cuda.is_available())'))"
 
-[[ -f kimodo-practical/kimodo/out/web_mk/manifest.json ]] || ./bake_mk.sh
+../bin/gen-moves basic.json -o basic >/dev/null

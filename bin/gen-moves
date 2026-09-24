@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# gen-moves: generate a humanoid move set from a spec of text prompts with Kimodo and bake it (motion/README.md).
+# GPU (~2.5 GB VRAM) + the Llama-3 text encoder service on the CPU (~16 GB RAM); ~1 min per move.
+#
+#   gen-moves SPEC.json [-o DIR] [--json]
+#
+# SPEC.json: {"fps": 30, "moves": [{"name", "prompt", "duration", "loop", "travel", ...}]} (motion/basic.json).
+# DIR (default motion/outputs/<spec name>): manifest.json + one clip per move, the input of add-moves --baked.
+# Incremental: only moves whose spec entry changed since their last accepted generation are regenerated.
+# stdout: DIR (or a JSON object with --json); progress and the gate table on stderr; exit 0 / 1.
+set -euo pipefail
+root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+PY=$root/motion/kimenv/bin/python
+[[ ${1:-} = -h || ${1:-} = --help ]] && { sed -n '2,10p' "$0" | cut -c3-; exit 0; }
+[[ -x $PY ]] || { echo "gen-moves: not installed, run $root/setup.sh motion" >&2; exit 1; }
+unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+
+out=""; json=(); pos=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -o) out=$2; shift 2;;
+    --json) json=(--json); shift;;
+    -h|--help) sed -n '2,10p' "$0" | cut -c3-; exit 0;;
+    -*) echo "gen-moves: unknown option $1" >&2; exit 1;;
+    *) pos+=("$1"); shift;;
+  esac
+done
+[[ ${#pos[@]} -eq 1 ]] || { echo "usage: gen-moves SPEC.json [-o DIR] [--json]" >&2; exit 1; }
+spec=${pos[0]}
+[[ -f $spec ]] || { echo "gen-moves: no spec at $spec" >&2; exit 1; }
+out=${out:-$root/motion/outputs/$(basename "$spec" .json)}
+
+# the encoder runs as a service (gen_moves.py starts it when needed); api mode never loads it in-process
+export TEXT_ENCODERS_DIR=$root/motion/text_encoders TEXT_ENCODER_DEVICE=cpu TEXT_ENCODER_MODE=api
+exec "$PY" -P "$root/motion/gen_moves.py" "$spec" "$out" "${json[@]}"

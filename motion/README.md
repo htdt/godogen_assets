@@ -1,29 +1,30 @@
-# Kimodo moves — add-moves
+# Kimodo moves — gen-moves, add-moves
 
-Humanoid move sets generated with [NVIDIA Kimodo](https://research.nvidia.com/labs/sil/projects/kimodo/)
-(text- and constraint-conditioned motion diffusion, trained on studio mocap that covers videogame combat and
-locomotion), generated and gated with [kimodo-practical](https://github.com/htdt/kimodo-practical)'s `kimogen.py`,
-then put onto a Mixamo rig as ordinary glTF clips. This folder is `KIMODO_HOME`.
+Humanoid moves generated from text prompts with [NVIDIA Kimodo](https://research.nvidia.com/labs/sil/projects/kimodo/)
+(text- and constraint-conditioned motion diffusion, trained on studio mocap that covers locomotion, gestures,
+everyday actions, videogame combat and dance). `gen-moves` generates and gates a move set with
+[kimodo-practical](https://github.com/htdt/kimodo-practical)'s `kimogen.py` and bakes it; `add-moves` puts baked
+moves onto a Mixamo rig as ordinary glTF clips. This folder is `KIMODO_HOME`.
 
 ## Moves onto a character
 
 ```bash
 add-moves out/rig/hero_rigged.glb                                 # -> out/rig/hero_moves.glb + hero_rootmotion.json
 add-moves out/talk/hero_mouth.glb --speak line.wav -t line.txt    # mouth rig: moves + the "speak" clip
-add-moves hero_rigged.glb --baked path/to/web_moves -o hero.glb   # another baked move set
+add-moves hero_rigged.glb --baked "$KIMODO_HOME/basic" --baked out/moves/knight   # the basic set + custom moves
 ```
 
-The input is a `mia-rig` rig (`--fingers --anim none`) or its `lipsync` mouth rig: Mixamo bone names, a bind close
-to a T-pose with flat feet, facing +Z. `add_moves.py` (numpy only, ~1 s) writes one glTF animation per move and keeps
-the rest of the GLB as it is; a rig without the Mixamo core bones is an error.
+Without `--baked`, the moves are the basic set (below); `--baked` takes `gen-moves` outputs, repeatable, a later set
+winning a name clash. The input is a `mia-rig` rig (`--fingers --anim none`) or its `lipsync` mouth rig: Mixamo bone
+names, a bind close to a T-pose with flat feet, facing +Z. `add_moves.py` (numpy only, ~1 s) writes one glTF
+animation per move and keeps the rest of the GLB as it is; a rig without the Mixamo core bones is an error.
 
 Kimodo's SOMA skeleton has nearly the Mixamo layout and the T-pose as its zero pose, so the transfer is direct:
 each bone takes its source joint's world rotation from rest. Two static rest corrections keep it faithful: SOMA's
 T-pose hand bends ~18° off the forearm where rigs bind straight (the baked clips carry the straightened rest), and
 thighs, shins, upper arms and forearms are aimed along the source T-pose once, so a bind that is not an exact T-pose
-does not skew every pose. The root is scaled by the leg-length ratio. Measured on three MIA characters over the 17
-MK moves: median foot pitch on planted frames 0.8-0.9°, wrist bend within 1.3° of the source; fingers curl as in the
-source.
+does not skew every pose. The root is scaled by the leg-length ratio. Planted feet stay within ~1° of flat, wrists
+within ~1.3° of the source bend, and fingers curl as in the source.
 
 - Clips are in place: hips X/Z stay at bind, height follows the move. `<name>_rootmotion.json` carries the travel
   for the game to move the entity by: `scaleRoot`, and per clip `fps`, `numFrames`, `loop`, `frameData`, `hipY` and
@@ -33,45 +34,69 @@ source.
   Other animations in the input are kept; one with a move's name is replaced.
 - Proportions differ from Kimodo's body, so planted feet can slide a little (toe speed p90 ~0.1 m/s on planted
   frames; walks ~0.4) and hands that reach the face in the source can touch a big-headed character's face. Look at a
-  filmstrip per character: `asset-blender tools/render_anim.py -- hero_moves.glb kick.png --action kick_high`.
+  filmstrip per character: `asset-blender tools/render_anim.py -- hero_moves.glb jump.png --action jump`.
 
-`--json`: `{output, rootmotion, baked}`. In the engine, play the clips by driving animation time with weight
-crossfades (Godot and Bevy import glTF animations natively; Babylon: paused `AnimationGroup` + `goToFrame`) and move
-the entity by `pelvisXZ`. godogen's `asset-gen/motion.md` has the engine-side rules (impact timing, gates against
-props).
+`--json`: `{output, rootmotion, baked}` (`baked`: the move sets used). In the engine, play the clips by driving
+animation time with weight crossfades (Godot and Bevy import glTF animations natively; Babylon: paused
+`AnimationGroup` + `goToFrame`) and move the entity by `pelvisXZ`. godogen's `asset-gen/motion.md` has the
+engine-side rules (impact timing, gates against props).
 
-## The default move set
+## The basic set
 
-`add-moves` uses the 17-move MK set (kimodo-practical's validated `kimodo/moveset_mk.json`): `idle_stance`,
-`walk_fwd`, `walk_back` (loops), `jump_up`, `crouch`, `block_high`, `jab`, `punch_heavy`, `uppercut`, `kick_front`,
-`kick_high`, `kick_side`, `sweep`, `hit_head`, `hit_heavy`, `knockdown`, `victory`. Every move starts and ends in
-the idle's stance, so clips chain. `bake_mk.sh` (run by setup) generates it into
-`kimodo-practical/kimodo/out/web_mk`: GPU ~2.5 GB VRAM plus the text encoder on the CPU (~16 GB RAM), ~15 min, as
-one GPU job. `bake_mk.sh --only sweep,jab` regenerates single moves and re-bakes the set.
+`basic.json`, baked by setup into `basic/`: `idle`, `walk`, `run` (loops, trimmed to their best cycle) and `jump`
+(starts and ends in the idle's stance). It covers a character that stands and moves around; every other move a game
+needs is a custom one.
 
 ## Custom moves
 
-A game's own move set is a spec of prompts and constraints for `kimogen.py`, which generates best-of-N per move and
-gates it (foot skate, jitter, stance bookends, apex heights, constraint adherence). Write the spec from
-kimodo-practical's `BAKE.md` (spec and gates), `KIMODO.md` (running the generator) and `ANIMATION_AGENT.md` (which
-control to use when); `kimodo/moveset_mk.json` is a worked example. `kimogen.py` writes into its own checkout, so
-author in a per-project clone:
+A move set is a JSON spec of prompts. `gen-moves` generates each move best-of-8, gates the samples numerically and
+bakes the winners into a folder for `add-moves --baked`:
 
-```bash
-git clone "$KIMODO_HOME/kimodo-practical" moves && cd moves/kimodo
-export TEXT_ENCODERS_DIR=$KIMODO_HOME/text_encoders TEXT_ENCODER_DEVICE=cpu TEXT_ENCODER_MODE=api
-PY=$KIMODO_HOME/kimenv/bin/python
-GRADIO_SERVER_NAME=127.0.0.1 $PY -P -m kimodo.scripts.run_text_encoder_server &  # once per session, loads 16 GB
-$PY kimogen.py gen --spec my_moves.json && $PY kimogen.py report
-$PY bake_kimodo.py --spec my_moves.json --web out/web_mine
-add-moves hero_rigged.glb --baked out/web_mine
+```json
+{"fps": 30, "moves": [
+  {"name": "wave", "prompt": "A person waves hello with their right hand, then lowers it.", "duration": 3.0,
+   "travel": "in_place"},
+  {"name": "sneak", "prompt": "A person sneaks forward slowly, crouched low.", "duration": 4.0, "loop": true,
+   "travel": "fwd"},
+  {"name": "fall", "prompt": "A person collapses and falls backward onto the ground.", "duration": 3.0,
+   "travel": null, "apex": {"kind": "root_floor", "max": 0.4}}
+]}
 ```
 
-Run the venv's Python (`kimenv/bin/python -P -m ...`), not its console scripts (`kimodo_gen`, `kimodo_textencoder`):
-they carry absolute shebangs. `-P` keeps the current directory off `sys.path`: started from `$KIMODO_HOME`, the
-`kimodo/` checkout would shadow the installed package. `TEXT_ENCODER_MODE=api` makes a missing service an error; the
-default `auto` silently loads the 16 GB encoder into every process instead. The service binds all interfaces unless
-`GRADIO_SERVER_NAME` is set.
+```bash
+gen-moves knight.json -o out/moves/knight                         # -> out/moves/knight/ (manifest.json + clips)
+add-moves out/rig/knight_rigged.glb --baked out/moves/knight
+```
+
+| key | |
+|---|---|
+| `name`, `prompt`, `duration` | clip name; one action as "A person ..." with plain physical verbs; seconds (≤ 10) |
+| `loop` | cycles (idles, walks): trimmed to the best 1-3.2 s loop |
+| `travel` | `"fwd"`, `"back"`, `"in_place"` or `null`: gate on the net root travel |
+| `apex` | gate on the move's defining moment, in metres: `root_rise` (jumps), `root_dip` (crouches), `root_floor` (falls, `max`), `ankle_height` (kicks), `foot_excursion` (sweeps, lunges), with `min` and/or `max` |
+| `stance_bookend` | start and end in the stance of the move named by the spec's top-level `"stance"` (default `idle_stance`), which is generated first: one-shots chain with that idle, and their gates measure from standing |
+| `strike`, `height` | `"hand"`/`"foot"`, `"low"`/`"mid"`/`"high"`: attack frame data (startup, active, contact) in `rootmotion.json` |
+| `constraints` | Kimodo keyframes, hand/foot targets and root paths: kimodo-practical's `BAKE.md` §3 and `ANIMATION_AGENT.md` |
+| `jitter_max` | the jitter gate, mean joint acceleration (default 0.015 m/frame²): fast moves exceed it by nature (the basic `run` and `jump`: 0.03) |
+| `seed` | another best-of-8 draw (default 42) |
+
+- Samples are gated on foot skate, jitter, travel, apex, stance and constraint adherence; the best passing one wins.
+  When none passes, `gen-moves` exits 1 naming the moves, and the gate table on stderr shows why. Kimodo undershoots
+  amplitude: say the height or distance plainly ("at head height"), gate what defines the move (a jump gated only
+  on smoothness never leaves the ground; one without a bookend can start in a squat and pass its rise by standing
+  up), and when every sample fails, reword stronger or lengthen the duration.
+- One action per move: split combos into moves. Generate the natural tempo and play it faster in the engine rather
+  than squeezing the duration.
+- Incremental: a move whose spec entry is unchanged is reused, so adding or rewording a move regenerates only that
+  one. `<DIR>/gen/` holds the work (per-move NPZ and gate report); delete it to regenerate everything.
+- Cost: ~1 min GPU per move (~2.5 GB VRAM, one GPU job) plus the Llama-3 text encoder, a CPU service (~16 GB RAM) that
+  `gen-moves` starts when something needs generating (1-3 min) and stops afterwards. For a session of runs, start it
+  once and `gen-moves` reuses it:
+  `GRADIO_SERVER_NAME=127.0.0.1 TEXT_ENCODERS_DIR=$KIMODO_HOME/text_encoders TEXT_ENCODER_DEVICE=cpu
+  $KIMODO_HOME/kimenv/bin/python -P -m kimodo.scripts.run_text_encoder_server &` (without `GRADIO_SERVER_NAME` it
+  binds all interfaces).
+
+`--json`: `{output, moves, generated, seconds}` or `{error}`. Look at every new move on a character before using it.
 
 `add-moves` does not land authored hand/foot targets exactly on a character with other proportions (it transfers
 rotations, like any retargeter). A move whose hand must hit a prop point needs kimodo-practical's own Stage 1/3
@@ -84,11 +109,12 @@ Mixamo names.
 
 - `kimodo/`: upstream NVIDIA Kimodo (pinned), editable-installed into `kimenv/` (Python 3.12, torch 2.6.0 cu124,
   the `[all]` extras; pip's cmake builds the MotionCorrection extension);
-- `kimodo-practical/` (pinned): the generator wrapper, bake, the MK spec;
+- `kimodo-practical/` (pinned): the generator, gates and bake that `gen-moves` runs;
 - `text_encoders/`: the Llama-3-8B base is gated, so `setup_text_encoder.py` assembles the same layout from the
   public byte-identical `NousResearch/Meta-Llama-3-8B-Instruct` mirror and the McGill-NLP LLM2Vec adapters
   (symlinks into the Hugging Face cache, ~16 GB);
-- the Kimodo weights (`nvidia/Kimodo-SOMA-RP-v1.1`, ~1 GB) download on the first generation, then `bake_mk.sh` runs.
+- the Kimodo weights (`nvidia/Kimodo-SOMA-RP-v1.1`, ~1 GB) download on the first generation, when setup bakes
+  `basic.json` into `basic/` (~5 min, one GPU job).
 
 `export KIMODO_HOME=<repo>/motion` in the shell profile: godogen's motion docs key on it. The venv is not relocatable
 (editable install, absolute paths in the encoder adapter configs): after moving the repo, delete `kimenv/` and
