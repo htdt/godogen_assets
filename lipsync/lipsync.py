@@ -100,8 +100,8 @@ jaw.rotation_mode = 'QUATERNION'
 keys = body.data.shape_keys
 JMAX = face['jaw_open_max_rad']
 
-# the input may already carry body clips (e.g. Kimodo moves prebaked onto the mouth rig: prebake keys every joint,
-# the jaw included, at rest). Drop their jaw channels so the speech layer alone owns the jaw when a game plays both.
+# the input may already carry body clips; a tool that keys every joint keys the jaw too (at rest). Drop their jaw
+# channels so the speech layer alone owns the jaw when a game plays both.
 def fcurve_sets(a):
     if getattr(a, 'layers', None):
         for layer in a.layers:

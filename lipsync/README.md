@@ -36,8 +36,8 @@ the voice (`qwen-tts clone`), then `lipsync --add` per line.
 | `poses.png` | check sheet: rest, jaw 40 / 100 %, wide, round, combinations; rows front, 3/4, sagittal cut |
 | `work/` | landmark render + detections (`face_landmarks.png`), logs, Rhubarb cues |
 
-Cost: ~1 % more triangles and ≤ 1.2 MB on a 1024 mesh, +7 % on a 30k mesh; body skinning and the Kimodo gates are
-unchanged, so the mouth rig certifies like the plain rig.
+Cost: ~1 % more triangles and ≤ 1.2 MB on a 1024 mesh, +7 % on a 30k mesh; body skinning is unchanged, so
+`add-moves` treats the mouth rig like the plain rig and leaves the jaw to speech.
 
 ## In a game
 

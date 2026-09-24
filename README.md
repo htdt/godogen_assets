@@ -9,7 +9,7 @@ with its own isolated environment; this repo holds the tools, their interfaces a
 | `qwen-image` | text → PNG, `rgba` → transparent PNG, `edit` with reference images (Qwen-Image-2.1) | GPU | [image/](image/README.md) |
 | `gen3d` | image → textured GLB (TRELLIS.2-4B) | GPU | [mesh/](mesh/README.md) |
 | `mia-rig` | humanoid GLB → Mixamo-rigged GLB, optionally + a Mixamo clip (Make-It-Animatable) | CPU | [rig/](rig/README.md) |
-| `add-moves` | rigged GLB → GLB with a Kimodo move set + `rootmotion.json` (kimodo-practical) | CPU | [motion/](motion/README.md) |
+| `add-moves` | rigged GLB → GLB with a Kimodo move set (17 fighting moves by default) + `rootmotion.json` | CPU | [motion/](motion/README.md) |
 | `lipsync` | rigged GLB + voice line → mouth rig (jaw, lips, teeth) + lip-synced `speak` clip | CPU | [lipsync/](lipsync/README.md) |
 | `stable-audio` | text → sound effect or seamless ambience loop (Stable Audio 3 small-sfx) | GPU | [sfx/](sfx/README.md) |
 | `qwen-tts` | text → voice line, from a voice description or a reference clip (Qwen3-TTS 1.7B) | GPU | [voice/](voice/README.md) |
@@ -54,7 +54,7 @@ Props stop after `gen3d`. Stock animation instead of Kimodo moves: `mia-rig --an
 ## Setup
 
 Needs: Linux x86-64; NVIDIA GPU with ≥ 12 GB VRAM and driver ≥ 580 (CUDA 13 wheels in image/voice, CUDA 12.x
-elsewhere); ≥ 24 GB RAM; ~130 GB free disk during setup; `git curl unzip gcc g++ ffmpeg`, node ≥ 20 with npm,
+elsewhere); ≥ 24 GB RAM; ~130 GB free disk during setup; `git curl unzip gcc g++ ffmpeg`,
 [uv](https://docs.astral.sh/uv/) and [micromamba](https://mamba.readthedocs.io/) on `PATH`; a Hugging Face token
 (`hf auth login`) whose account accepted the [Stable Audio 3 small-sfx](https://huggingface.co/stabilityai/stable-audio-3-small-sfx)
 licence (the only gated model; the other gated repos are replaced by public mirrors).
@@ -107,7 +107,7 @@ bin/       the commands (thin launchers into each part's environment)
 image/     qwen-image    cli.py, generate.py (quantized pipeline), quantize.py
 mesh/      gen3d         gen3d.py, lowmem.py (the 12 GB patches for TRELLIS.2), test_lowmem.py
 rig/       mia-rig       mia_rig.py, Blender rig scripts (normalize_rig, merge_anim, rigops), make_templates.py
-motion/    add-moves     KIMODO_HOME: setup.sh, bake_mk.sh (Kimodo, kimodo-practical, venv, text encoder)
+motion/    add-moves     KIMODO_HOME: add_moves.py (the transfer), setup.sh, bake_mk.sh (Kimodo, kimodo-practical)
 lipsync/   lipsync       mouth_rig.py, lipsync.py, face_landmarks.py, check renders (face_test, hole_check)
 sfx/       stable-audio  cli.py
 voice/     qwen-tts      cli.py

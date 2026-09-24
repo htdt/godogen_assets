@@ -14,8 +14,8 @@ stdout carries only the rigged GLB path (or the JSON result with --json), progre
 
 It drives the functions behind MIA's Gradio demo (app.py) directly, so the results match the demo, with one addition:
 right after MIA resets the character to its T-pose rest, the torso is stood upright (hips -> chest vertical) and that
-pose becomes the rest (--no-upright to skip). A torso that leans at bind skews retargeted foot rotations
-(kimodo-practical's footFlat gate); MIA straightens the limbs but not the torso's lean against the hips.
+pose becomes the rest (--no-upright to skip). A torso that leans at bind (~10 deg) carries that lean
+into every transferred move; MIA straightens the limbs but not the torso's lean against the hips.
 """
 import os
 import sys

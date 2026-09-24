@@ -3,9 +3,9 @@
 #   kimodo/            upstream NVIDIA Kimodo (pinned), editable-installed into kimenv/
 #   kimenv/            Python 3.12 venv (torch 2.6.0 cu124); run tools as kimenv/bin/python -P ..., never the console
 #                      scripts (-P: from this folder, the kimodo/ checkout would shadow the installed package)
-#   kimodo-practical/  the pipeline lib (pinned): kimogen/bake (Python) + certify/prebake/QA (node)
+#   kimodo-practical/  the generation lib (pinned): kimogen.py (prompts, constraints, gated best-of-N) + bake
 #   text_encoders/     Llama-3 encoder mirror: symlinks into the HF cache (~16 GB download), no gated access needed
-# Then bakes the default MK move set (bake_mk.sh) unless it exists. Needs git, cmake-capable build tools, node >= 20.
+# Then bakes the default MK move set (bake_mk.sh) unless it exists. Needs git and cmake-capable build tools.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
@@ -23,7 +23,6 @@ kimenv/bin/pip install -q torch==2.6.0 --index-url https://download.pytorch.org/
 # --no-build-isolation so the MotionCorrection extension build sees the venv's cmake
 kimenv/bin/pip show -q kimodo >/dev/null 2>&1 \
   || (cd kimodo && PATH=$PWD/../kimenv/bin:$PATH ../kimenv/bin/pip install -q --no-build-isolation -e ".[all]")
-(cd kimodo-practical && npm install --no-audit --no-fund --loglevel=error)
 
 # The official base (meta-llama/Meta-Llama-3-8B-Instruct) is gated; this assembles the same layout from the public
 # byte-identical mirror + the McGill-NLP LLM2Vec adapters. It writes kimodo-practical/text_encoders.

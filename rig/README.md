@@ -29,9 +29,9 @@ mia-rig out/hero.glb --anim Walking.fbx -o out/rig/      # + a Mixamo clip -> he
   three.js's GLTFLoader strips the `:` (`mixamorigHips`).
 - `<name>_anim.glb` / `_anim.fbx` with `--anim`: the rig plus the clip (the GLB is rebuilt with Blender from MIA's
   rest pose and FBX action, because MIA's own FBX2glTF export loses the metallic/roughness map).
-- Two steps on top of MIA's demo pipeline, both needed for clean retargeting: the torso is stood upright at bind
-  (MIA straightens the limbs but keeps a lean of the torso against the hips, which skews every transferred foot
-  rotation) and the rig is grounded (MIA keeps TRELLIS's frame with the hips at the origin).
+- Two steps on top of MIA's demo pipeline: the torso is stood upright at bind (MIA straightens the limbs but keeps
+  the torso leaning ~10° against the hips, a lean every transferred move would carry) and the rig is grounded (MIA
+  keeps TRELLIS's frame with the hips at the origin).
 
 Limits: humanoids only (two arms, two legs, one spine); anything held near the hands gets skinned to the forearm.
 Poses other than T/A work (MIA resets them), but arms away from the body rig best.
