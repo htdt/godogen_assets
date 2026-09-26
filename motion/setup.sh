@@ -9,7 +9,8 @@
 # Needs git and cmake-capable build tools.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
-unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME PYTHONUSERBASE VIRTUAL_ENV
+export PYTHONNOUSERSITE=1
 KIMODO_COMMIT=6bb58488037dd65360ff0c5d1692b403a23309f7
 KP_COMMIT=036f0fdb5f01b792ff18b8fd2f85ad7e9856341b
 
@@ -19,7 +20,7 @@ git -C kimodo checkout -q $KIMODO_COMMIT
 git -C kimodo-practical checkout -q $KP_COMMIT
 
 [[ -x kimenv/bin/python ]] || uv venv -q --seed --python 3.12 kimenv
-kimenv/bin/pip install -q cmake ninja hatchling scikit-build-core
+kimenv/bin/pip install -q cmake==4.4.3 ninja==1.13.2 hatchling==1.32.4 scikit-build-core==1.0.3
 kimenv/bin/pip install -q torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 # --no-build-isolation so the MotionCorrection extension build sees the venv's cmake
 kimenv/bin/pip show -q kimodo >/dev/null 2>&1 \

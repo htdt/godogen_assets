@@ -3,7 +3,8 @@
 # Idempotent: finished steps are skipped. Afterwards the bf16 download can be removed from the HF cache.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
-unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME PYTHONUSERBASE VIRTUAL_ENV
+export PYTHONNOUSERSITE=1
 
 [[ -x .venv/bin/python ]] || uv venv -q --python 3.12 .venv
 uv pip install -q --python .venv/bin/python -r requirements.txt

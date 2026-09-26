@@ -52,13 +52,10 @@ os.makedirs(work, exist_ok=True)
 report = {'src': src}
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.import_scene.gltf(filepath=src)
+bpy.ops.import_scene.gltf(filepath=src, disable_bone_shape=True)
 scene = bpy.context.scene
 arm = next(o for o in scene.objects if o.type == 'ARMATURE')
 body = max((o for o in scene.objects if o.type == 'MESH'), key=lambda o: len(o.data.vertices))
-for o in list(scene.objects):  # the importer's bone display shapes
-    if o.type == 'MESH' and o is not body and o.parent is None and len(o.data.vertices) < 100:
-        bpy.data.objects.remove(o)
 if arm.animation_data:
     arm.animation_data.action = None
 for pb in arm.pose.bones:
@@ -1149,3 +1146,6 @@ bpy.ops.export_scene.gltf(filepath=out, export_animations=False, export_morph=Tr
                           export_try_sparse_sk=True)
 json.dump(face, open(os.path.splitext(out)[0] + '.face.json', 'w'), indent=1, default=float)
 print('WROTE', out, json.dumps(report, default=float))
+
+if 'asset_result' in globals():
+    asset_result({'output': out})

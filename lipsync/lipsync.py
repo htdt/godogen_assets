@@ -25,6 +25,7 @@ import json
 import math
 import struct
 import subprocess
+import tempfile
 import numpy as np
 from mathutils import Vector, Quaternion, Matrix
 
@@ -63,8 +64,11 @@ if cues_path is None:
     if '--phonetic' in argv:
         cmd += ['-r', 'phonetic']
     subprocess.run(cmd + [wav], check=True)
-cues = json.load(open(cues_path))['mouthCues']
-duration = max(c['end'] for c in cues)
+cue_data = json.load(open(cues_path))
+cues = cue_data['mouthCues']
+duration = max([cue_data.get('metadata', {}).get('duration', 0)] + [c['end'] for c in cues])
+if duration <= 0 or fps <= 0:
+    raise ValueError('speech duration and fps must be positive')
 nfr = int(math.ceil(duration * fps)) + 1
 
 # per-frame targets (value of the cue active at the frame time), then a short Gaussian (~35 ms) so shapes blend
@@ -91,12 +95,10 @@ scene = bpy.context.scene
 # before the import: the importer turns key times into frames at the scene rate and the exporter turns them back at
 # the rate then set, so clips already in the input keep their length only if both rates are the same
 scene.render.fps, scene.render.fps_base = fps, 1.0
-bpy.ops.import_scene.gltf(filepath=src)
-scene.frame_start, scene.frame_end = 1, nfr
+bpy.ops.import_scene.gltf(filepath=src, disable_bone_shape=True)
+scene.frame_start, scene.frame_end = 0, nfr - 1
 arm = next(o for o in scene.objects if o.type == 'ARMATURE')
-meshes = [o for o in scene.objects if o.type == 'MESH' and (o.parent is not None or len(o.data.vertices) > 100)]
-for o in [o for o in scene.objects if o.type == 'MESH' and o not in meshes]:
-    bpy.data.objects.remove(o)
+meshes = [o for o in scene.objects if o.type == 'MESH']
 body = max(meshes, key=lambda o: len(o.data.vertices))
 jaw = arm.pose.bones[face['jaw_bone']]
 jaw.rotation_mode = 'QUATERNION'
@@ -116,6 +118,18 @@ def fcurve_sets(a):
 
 
 n_stripped = 0
+owners = list(scene.objects) + [o.data.shape_keys for o in meshes if o.data.shape_keys]
+for owner in owners:
+    if owner.animation_data:
+        owner.animation_data.action = None
+        for track in list(owner.animation_data.nla_tracks):
+            track.mute = True
+            for strip in list(track.strips):
+                if strip.action and strip.action.name == action_name:
+                    track.strips.remove(strip)
+for other in list(bpy.data.actions):
+    if other.name == action_name:
+        bpy.data.actions.remove(other)
 for other in list(bpy.data.actions):
     if any(fc.data_path.startswith('key_blocks') for fcs in fcurve_sets(other) for fc in fcs):
         continue  # an earlier speech clip (it drives the shape keys): keep its jaw
@@ -132,11 +146,11 @@ arm.animation_data_create().action = act
 keys.animation_data_create().action = act
 for f in range(nfr):
     jaw.rotation_quaternion = Quaternion((1, 0, 0), float(curves[f, 0]) * JMAX)
-    jaw.keyframe_insert('rotation_quaternion', frame=f + 1)
+    jaw.keyframe_insert('rotation_quaternion', frame=f)
     for k, name in ((1, 'wide'), (2, 'round')):
         kb = keys.key_blocks[name]
         kb.value = float(np.clip(curves[f, k], 0, 1))
-        kb.keyframe_insert('value', frame=f + 1)
+        kb.keyframe_insert('value', frame=f)
 
 def clip_lengths(path):
     """{animation name: seconds} from a GLB's JSON chunk."""
@@ -149,16 +163,30 @@ def clip_lengths(path):
 
 
 before = clip_lengths(src)
-# no sampling: only the keyed channels (jaw + morph weights) go into the clip, not every bone of the skeleton
-bpy.ops.export_scene.gltf(filepath=out, export_animations=True, export_animation_mode='ACTIONS', export_morph=True,
-                          export_morph_normal=False, export_try_sparse_sk=True, export_force_sampling=False)
-after = clip_lengths(out)
-changed = [f'{n} {before[n]:.2f} -> {after[n]:.2f} s' for n in before
-           if n in after and n != action_name and abs(after[n] - before[n]) > 1.5 / fps]
-if changed:  # the clips the input already had must pass through unchanged
-    sys.exit('clip lengths changed on re-export: ' + ', '.join(changed))
+# Validate a temporary export before replacing an existing GLB (the default for --add).
+os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+fd, temporary = tempfile.mkstemp(suffix='.glb', dir=os.path.dirname(os.path.abspath(out)))
+os.close(fd)
+try:
+    bpy.ops.export_scene.gltf(filepath=temporary, export_animations=True, export_animation_mode='ACTIONS', export_morph=True,
+                              export_morph_normal=False, export_try_sparse_sk=True, export_force_sampling=False)
+    after = clip_lengths(temporary)
+    missing = set(before) - set(after) - {action_name}
+    changed = [f'{n} {before[n]:.2f} -> {after[n]:.2f} s' for n in before
+               if n in after and n != action_name and abs(after[n] - before[n]) > 1.5 / fps]
+    if missing or changed or action_name not in after:
+        raise ValueError(f'clip validation failed: missing {sorted(missing)}, changed {changed}, speech {action_name in after}')
+    umask = os.umask(0)
+    os.umask(umask)
+    os.chmod(temporary, 0o666 & ~umask)  # mkstemp creates private files
+    os.replace(temporary, out)
+finally:
+    if os.path.exists(temporary):
+        os.remove(temporary)
 print('WROTE', out, 'frames', nfr, 'fps', fps, 'cues', len(cues))
 if not render_to:
+    if 'asset_result' in globals():
+        asset_result({'output': out})
     sys.exit(0)
 
 # ---- render: arms down, optional head sway, two shots ----
@@ -189,7 +217,7 @@ if '--head-motion' in argv:
         head.rotation_euler = (math.radians(1.5 * math.sin(2.1 * t[f]) + 2.5 * energy[f] * math.sin(5.3 * t[f])),
                                math.radians(2.0 * math.sin(0.9 * t[f] + 1.0)),
                                math.radians(1.2 * math.sin(1.3 * t[f] + 2.0)))
-        head.keyframe_insert('rotation_euler', frame=f + 1)
+        head.keyframe_insert('rotation_euler', frame=f)
 
 if engine == 'cycles':
     scene.render.engine = 'CYCLES'
@@ -251,3 +279,5 @@ subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-framerate', str(fps), '-
                 '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-c:a', 'aac', '-b:a', '160k', '-shortest',
                 render_to], check=True)
 print('WROTE', render_to)
+if 'asset_result' in globals():
+    asset_result({'output': out, 'video': render_to})

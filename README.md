@@ -59,6 +59,9 @@ lipsync --add speak out/talk/hero_moves.glb line.wav -t line.txt   # + the "spea
 ```
 
 Props stop after `gen3d`. Stock animation instead of Kimodo moves: `mia-rig --anim clip.fbx` with a Mixamo clip.
+Held weapons should be separate props. A prop following the wrist does not make the motion a convincing attack:
+generate a move for that weapon and hand, gate its amplitude, then preview it with the prop and check its swept path
+against the opponent in the game. See [combat moves](motion/README.md#combat-and-held-props).
 
 ## Conventions
 
@@ -74,8 +77,9 @@ Props stop after `gen3d`. Stock animation instead of Kimodo moves: `mia-rig --an
 - **Frames and units.** `gen3d` GLBs are glTF Y-up, centred, height normalised to 1.0 (no metric scale: size them in
   the engine). `mia-rig` rigs are human scale (~1.8 m), soles at y=0, facing +Z, Mixamo bone names.
 - **Isolation.** Every tool has its own environment inside its folder; the launchers drop the caller's venv,
-  `PYTHONPATH` and `LD_LIBRARY_PATH`, so they behave the same from any shell or project.
-- Without `-o`, results go to the tool's `outputs/` folder.
+  `PYTHONPATH`, `PYTHONHOME`, user site packages and `LD_LIBRARY_PATH`, so they behave the same from any shell or project.
+- Without `-o`, generators use their part's `outputs/` folder. `add-moves` writes beside its input;
+  `lipsync --add` updates its input after validating a temporary export.
 
 ## Setup
 
@@ -128,10 +132,16 @@ You can't look at a GLB directly, so render it:
 asset-blender tools/render_glb.py -- model.glb renders/            # 4 textured + 4 clay views, mesh stats JSON
 asset-blender tools/pose_test.py -- hero_rigged.glb poses.png      # 6 stress poses of a rig (skinning check)
 asset-blender tools/render_anim.py -- hero_moves.glb jump.png --action jump        # frames of one clip
+asset-blender tools/render_anim.py -- hero_moves.glb slash.png --action sword_slash --prop sword.glb --bone RightHand
 python3 tools/glb_info.py hero_moves.glb                           # meshes, morph targets, skins, clips, bytes
 ```
 
 `gen3d` also writes `<name>_preview.png`, and `lipsync` writes a check sheet and a video.
+`asset-blender` puts Blender logs on stderr and result paths on stdout (`--json` after the script returns JSON).
+Script exceptions exit 1. Custom check scripts may call `asset_result({"output": path})` to return a result.
+
+After changing animation or command interfaces, run the CPU regression checks:
+`motion/kimenv/bin/python -P motion/test_motion.py` and `python3 tools/test_cli.py` (installed launchers required).
 
 ## Layout
 
@@ -140,12 +150,12 @@ bin/       the commands (thin launchers into each part's environment)
 image/     qwen-image    cli.py, generate.py (quantized pipeline), quantize.py
 mesh/      gen3d         gen3d.py, lowmem.py (the 12 GB patches for TRELLIS.2), test_lowmem.py
 rig/       mia-rig       mia_rig.py, Blender rig scripts (normalize_rig, merge_anim, rigops), make_templates.py
-motion/    gen-moves     gen_moves.py (Kimodo via kimodo-practical), loops.py (loop cycles), basic.json (default set)
+motion/    gen-moves     gen_moves.py (Kimodo via kimodo-practical), loops.py (loop cycles), strikes.py (strike gates), basic.json
            add-moves     add_moves.py (the transfer)
 lipsync/   lipsync       mouth_rig.py, lipsync.py, face_landmarks.py, check renders (face_test, hole_check)
 sfx/       stable-audio  cli.py
 voice/     qwen-tts      cli.py
-tools/     render_glb.py, pose_test.py, render_anim.py, glb_info.py
+tools/     render_glb.py, pose_test.py, render_anim.py (optional prop preview), glb_info.py; shared launcher helpers
 ```
 
 Everything `setup.sh` builds or downloads (environments, upstream checkouts, weights, `deps/blender`) and every

@@ -4,10 +4,11 @@
 # only HOME, a minimal PATH, locale and HF / CUDA variables pass through.
 set -euo pipefail
 root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+source "$root/tools/launcher.sh"
 python="$root/image/.venv/bin/python"
 [[ -x $python ]] || { echo "qwen-image: not installed, run $root/setup.sh image" >&2; exit 1; }
 
-passthrough=(HOME="$HOME" PATH="/usr/local/bin:/usr/bin:/bin" LANG="${LANG:-C.UTF-8}" TERM="${TERM:-dumb}")
+passthrough=(PYTHONNOUSERSITE=1 HOME="$HOME" PATH="/usr/local/bin:/usr/bin:/bin" LANG="${LANG:-C.UTF-8}" TERM="${TERM:-dumb}")
 for var in HF_HOME HF_TOKEN HF_HUB_OFFLINE HF_HUB_CACHE CUDA_VISIBLE_DEVICES; do
   if [[ -n "${!var:-}" ]]; then passthrough+=("$var=${!var}"); fi
 done

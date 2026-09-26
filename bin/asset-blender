@@ -7,9 +7,12 @@
 # A relative script path that does not exist in the current directory is taken relative to the repo root.
 set -euo pipefail
 root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+source "$root/tools/launcher.sh"
 BLENDER=${BLENDER:-$root/deps/blender/blender}
+[[ ${1:-} = -h || ${1:-} = --help ]] && { sed -n '2,7p' "$0" | cut -c3-; exit 0; }
 [[ -x $BLENDER ]] || { echo "asset-blender: no Blender at $BLENDER, run $root/setup.sh blender" >&2; exit 1; }
 [[ $# -ge 1 ]] || { sed -n '2,7p' "$0" | cut -c3-; exit 1; }
 script=$1; shift
 [[ -f $script || $script = /* || ! -f $root/$script ]] || script=$root/$script
-exec env -u LD_LIBRARY_PATH -u PYTHONPATH -u VIRTUAL_ENV "$BLENDER" -b --factory-startup -P "$script" "$@"
+exec env -u LD_LIBRARY_PATH -u PYTHONPATH -u PYTHONHOME -u PYTHONUSERBASE -u VIRTUAL_ENV PYTHONNOUSERSITE=1 \
+  "$BLENDER" -b --factory-startup --python-exit-code 1 -P "$root/tools/blender_entry.py" -- "$script" "$@" 3>&1 1>&2

@@ -17,21 +17,28 @@ argv = sys.argv[sys.argv.index('--') + 1:]
 src, dst = argv[0], argv[1]
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.import_scene.gltf(filepath=src)
+bpy.ops.import_scene.gltf(filepath=src, disable_bone_shape=True)
 scene = bpy.context.scene
 vl = bpy.context.view_layer
 arm = next(o for o in scene.objects if o.type == 'ARMATURE')
-meshes = [o for o in scene.objects if o.type == 'MESH' and len(o.data.vertices) > 100]
-for o in [o for o in scene.objects if o.type == 'MESH' and o not in meshes]:
-    bpy.data.objects.remove(o)  # the glTF importer's bone display shapes
+meshes = [o for o in scene.objects if o.type == 'MESH']
 
+if arm.animation_data:
+    arm.animation_data.action = None
+    for track in arm.animation_data.nla_tracks:
+        track.mute = True
 for b in arm.pose.bones:
     b.matrix_basis = Matrix.Identity(4)
 vl.update()
 
 # Blender Z-up == glTF Y-up: shift rest bones and mesh by the same world offset
 dg = bpy.context.evaluated_depsgraph_get()
-minz = min((m.matrix_world @ v.co).z for m in meshes for v in m.evaluated_get(dg).to_mesh().vertices)
+minz = float('inf')
+for m in meshes:
+    evaluated = m.evaluated_get(dg)
+    mesh = evaluated.to_mesh()
+    minz = min(((evaluated.matrix_world @ v.co).z for v in mesh.vertices), default=minz)
+    evaluated.to_mesh_clear()
 mid = (rigops.world_head(arm, 'LeftFoot') + rigops.world_head(arm, 'RightFoot')) / 2
 d = Vector((-mid.x, -mid.y, -minz))
 bpy.ops.object.select_all(action='DESELECT')
@@ -44,9 +51,19 @@ for eb in arm.data.edit_bones:
     eb.tail += dl
 bpy.ops.object.mode_set(mode='OBJECT')
 for m in meshes:
+    ancestor = m
+    while ancestor and ancestor.parent_type != 'BONE':
+        ancestor = ancestor.parent
+    if ancestor:  # rigid attachments already follow the shifted rest bone
+        continue
     ml = m.matrix_world.inverted().to_3x3() @ d
-    for v in m.data.vertices:
-        v.co += ml
+    blocks = [k.data for k in m.data.shape_keys.key_blocks] if m.data.shape_keys else [m.data.vertices]
+    for vertices in blocks:
+        for v in vertices:
+            v.co += ml
 
 bpy.ops.export_scene.gltf(filepath=dst)
 print('NORMALIZED', dst, {'ground_shift_m': [round(x, 3) for x in d]})
+
+if 'asset_result' in globals():
+    asset_result({'output': dst})

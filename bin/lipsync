@@ -18,11 +18,13 @@
 # stdout: the output GLB path (or a JSON object with --json); progress on stderr; exit 0 / 1.
 set -euo pipefail
 root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+source "$root/tools/launcher.sh"
 BLENDER=${BLENDER:-$root/deps/blender/blender}
 [[ ${1:-} = -h || ${1:-} = --help ]] && { sed -n '2,18p' "$0" | cut -c3-; exit 0; }
 [[ -x $BLENDER && -x $root/lipsync/.venv/bin/python && -x $root/lipsync/rhubarb/rhubarb ]] \
   || { echo "lipsync: not installed, run $root/setup.sh blender lipsync" >&2; exit 1; }
-unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME PYTHONUSERBASE VIRTUAL_ENV
+export PYTHONNOUSERSITE=1
 
 add=""; text=""; out=""; face=""; render=1; engine=eevee; json=0; rigargs=(); lsargs=(); pos=()
 while [[ $# -gt 0 ]]; do
@@ -48,7 +50,7 @@ glb=$(readlink -f "${pos[0]}"); wav=$(readlink -f "${pos[1]}")
 
 result() {  # result key value ... -> JSON object (with --json) or the output path on stdout
   if [[ $json = 1 ]]; then
-    python3 -c 'import json, sys; a = sys.argv[1:]
+    "$root/lipsync/.venv/bin/python" -c 'import json, sys; a = sys.argv[1:]
 print(json.dumps({k: int(v) if v.isdigit() else (v or None) for k, v in zip(a[::2], a[1::2])}))' "$@"
   else
     echo "$2"
@@ -65,7 +67,7 @@ if [[ -n $add ]]; then
   [[ -f $face ]] || { echo "lipsync: no face JSON at $face (pass --face)" >&2; exit 1; }
   out=$(readlink -f "${out:-$glb}")
   log=$(mktemp)
-  "$BLENDER" -b --factory-startup -P "$root/lipsync/lipsync.py" -- "$glb" "$wav" "$out" --face "$face" \
+  "$BLENDER" -b --factory-startup --python-exit-code 1 -P "$root/lipsync/lipsync.py" -- "$glb" "$wav" "$out" --face "$face" \
     --action "$add" "${lsargs[@]}" > "$log" 2>&1 || { tail -20 "$log" >&2; exit 1; }
   grep -E '^WROTE|removed' "$log" >&2 || true
   rm -f "$log" "${out%.glb}.rhubarb.json"
@@ -79,7 +81,7 @@ outdir=$(readlink -f "${out:-$root/lipsync/outputs/$name}")
 mkdir -p "$outdir/work"
 run() {  # run script.py args... : Blender headless, log in work/
   local log="$outdir/work/$(basename "$1" .py).log"
-  "$BLENDER" -b --factory-startup -P "$@" > "$log" 2>&1 || { tail -20 "$log" >&2; exit 1; }
+  "$BLENDER" -b --factory-startup --python-exit-code 1 -P "$@" > "$log" 2>&1 || { tail -20 "$log" >&2; exit 1; }
 }
 run "$root/lipsync/mouth_rig.py" -- "$glb" "$outdir/${name}_mouth.glb" --work "$outdir/work" "${rigargs[@]}"
 grep '^WROTE' "$outdir/work/mouth_rig.log" | cut -c1-200 >&2

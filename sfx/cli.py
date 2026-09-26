@@ -22,7 +22,11 @@ import os
 import random
 import sys
 import time
+import math
 from datetime import datetime
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from cli_args import ArgumentParser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL = "small-sfx"
@@ -134,6 +138,8 @@ def save(path: str, audio, sr: int) -> None:
 
 def cmd_generate(ns: argparse.Namespace) -> int:
     prompt = read_prompt(ns.prompt)
+    if not math.isfinite(ns.duration) or ns.duration <= 0 or ns.steps < 1:
+        raise SystemExit('--duration must be finite and positive; --steps must be >= 1')
     if ns.count < 1:
         raise SystemExit("--count must be >= 1")
     if ns.loop and ns.duration < 2:
@@ -215,7 +221,7 @@ def cmd_info(ns: argparse.Namespace) -> int:
         except Exception as e:  # noqa: BLE001
             info["import_error"] = f"{type(e).__name__}: {e}"
     if ns.json:
-        print(json.dumps(info, indent=2))
+        print(json.dumps(info))
     else:
         for k, v in info.items():
             print(f"{k:16s} {v}")
@@ -223,7 +229,7 @@ def cmd_info(ns: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="stable-audio", description=__doc__,
+    p = ArgumentParser(prog="stable-audio", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
 

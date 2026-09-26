@@ -23,9 +23,6 @@ link_bin() {
   ls -l ~/.local/bin | grep -F "$root/bin"
 }
 
-for tool in git curl nvidia-smi; do
-  command -v $tool >/dev/null || { echo "setup: $tool not found (README.md, Setup)" >&2; exit 1; }
-done
 parts=("$@")
 [[ ${#parts[@]} -gt 0 ]] || parts=(blender image mesh rig motion lipsync sfx voice)
 for part in "${parts[@]}"; do

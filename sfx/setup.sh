@@ -4,7 +4,8 @@
 # (`hf auth login`); the first run downloads them.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
-unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME PYTHONUSERBASE VIRTUAL_ENV
+export PYTHONNOUSERSITE=1
 
 [[ -x .venv/bin/python ]] || uv venv -q --python 3.12 .venv
 uv pip install -q --python .venv/bin/python torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu126

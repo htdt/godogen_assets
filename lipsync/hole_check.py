@@ -27,11 +27,8 @@ face = json.load(open(face_json))
 RES = 320
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.import_scene.gltf(filepath=src)
+bpy.ops.import_scene.gltf(filepath=src, disable_bone_shape=True)
 sc = bpy.context.scene
-for o in list(sc.objects):  # the importer's bone display shapes
-    if o.type == 'MESH' and o.parent is None and len(o.data.vertices) < 100:
-        bpy.data.objects.remove(o)
 arm = next(o for o in sc.objects if o.type == 'ARMATURE')
 if arm.animation_data:
     arm.animation_data.action = None
@@ -91,3 +88,6 @@ img.filepath_raw = out
 img.file_format = 'PNG'
 img.save()
 print('WROTE', out)
+
+if 'asset_result' in globals():
+    asset_result({'output': out})

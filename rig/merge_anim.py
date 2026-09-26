@@ -13,7 +13,7 @@ import sys
 argv = sys.argv[sys.argv.index('--') + 1:]
 rest_glb, anim_fbx, out = argv
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.import_scene.gltf(filepath=rest_glb)
+bpy.ops.import_scene.gltf(filepath=rest_glb, disable_bone_shape=True)
 arm = next(o for o in bpy.context.scene.objects if o.type == 'ARMATURE')
 before = set(bpy.context.scene.objects)
 bpy.ops.import_scene.fbx(filepath=anim_fbx)
@@ -47,3 +47,6 @@ f0, f1 = action.frame_range
 bpy.context.scene.frame_start, bpy.context.scene.frame_end = int(f0), int(f1)
 bpy.ops.export_scene.gltf(filepath=out, export_animations=True, export_animation_mode='ACTIONS')
 print('WROTE', out, 'frames', int(f0), int(f1), 'root scale', round(ratio, 4))
+
+if 'asset_result' in globals():
+    asset_result({'output': out})

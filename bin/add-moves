@@ -12,40 +12,11 @@
 # stdout: OUT path (or a JSON object with --json); progress on stderr; exit 0 / 1.
 set -euo pipefail
 root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+source "$root/tools/launcher.sh"
 PY=$root/motion/kimenv/bin/python
 [[ ${1:-} = -h || ${1:-} = --help ]] && { sed -n '2,12p' "$0" | cut -c3-; exit 0; }
 [[ -x $PY ]] || { echo "add-moves: not installed, run $root/setup.sh motion" >&2; exit 1; }
-unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME PYTHONUSERBASE VIRTUAL_ENV
+export PYTHONNOUSERSITE=1
 
-baked=(); out=""; json=0; pos=()
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --baked) d=$2; [[ -e $d || $d = /* || ! -e $root/$d ]] || d=$root/$d; baked+=("$(readlink -m "$d")"); shift 2;;
-    -o) out=$2; shift 2;;
-    --json) json=1; shift;;
-    -h|--help) sed -n '2,12p' "$0" | cut -c3-; exit 0;;
-    -*) echo "add-moves: unknown option $1" >&2; exit 1;;
-    *) pos+=("$1"); shift;;
-  esac
-done
-[[ ${#pos[@]} -eq 1 ]] || { echo "usage: add-moves RIG.glb [--baked DIR ...] [-o OUT.glb] [--json]" >&2; exit 1; }
-rig=$(readlink -f "${pos[0]}")
-[[ ${#baked[@]} -gt 0 ]] || baked=("$root/motion/basic")
-for d in "${baked[@]}"; do
-  [[ -f $d/manifest.json ]] || { echo "add-moves: no baked move set at $d (gen-moves, motion/README.md)" >&2; exit 1; }
-done
-dir=$(dirname "$rig"); name=$(basename "$rig" .glb); name=${name%_rigged}; name=${name%_mouth}
-out=${out:-$dir/${name}_moves.glb}; mkdir -p "$(dirname "$out")"; out=$(readlink -f "$out")
-rootmotion="${out%.glb}_rootmotion.json"; rootmotion=${rootmotion/_moves_rootmotion/_rootmotion}
-
-"$PY" -P "$root/motion/add_moves.py" "$rig" "$out" "$rootmotion" "${baked[@]}" >&2
-
-face="${rig%.glb}.face.json"
-[[ -f $face ]] && cp "$face" "${out%.glb}.face.json"   # lipsync --add finds it next to the GLB
-
-if [[ $json = 1 ]]; then
-  "$PY" -c 'import json, sys; print(json.dumps({"output": sys.argv[1], "rootmotion": sys.argv[2], "baked": sys.argv[3:]}))' \
-    "$out" "$rootmotion" "${baked[@]}"
-else
-  echo "$out"
-fi
+exec "$PY" -P "$root/motion/add_moves.py" "$@"

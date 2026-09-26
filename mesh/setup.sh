@@ -4,7 +4,8 @@
 # driver for CUDA 12.4 (>= 550). The extensions compile for the local GPU (TORCH_CUDA_ARCH_LIST, detected).
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
-unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME PYTHONUSERBASE VIRTUAL_ENV
+export PYTHONNOUSERSITE=1
 E=$PWD/.conda
 TRELLIS_COMMIT=75fbf0183001ed9876c8dbb35de6b68552ee08bd
 

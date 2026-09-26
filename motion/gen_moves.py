@@ -18,10 +18,10 @@ kimogen's jitter gate (mean joint acceleration, 0.015 m/frame^2) for fast moves 
 swing exceeds it. The Llama-3 text encoder service (CPU, 16 GB) is started only when something is generated, and
 stopped afterwards unless it was already running.
 
-Two gates are changed (gate_sample): a loop move's cycle is searched in every sample (loops.py) and gated, and the
+Additional gates (gate_sample): a loop move's cycle is searched in every sample (loops.py) and gated, and the
 winner is cut to it (cut_loop) in place of kimogen's trim, which picks the stillest stretch of a repeated action and
 cuts at whole frames; the contact gate also accepts feet at rest above the floor (stairs, a ladder, a seat), where
-Kimodo's contact labels see none.
+Kimodo's contact labels see none. strikes.py gates the authored striking limb's amplitude and supplies its timing.
 """
 import argparse
 import contextlib
@@ -38,6 +38,9 @@ import urllib.request
 
 import numpy as np
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from cli_args import ArgumentParser
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, 'kimodo-practical', 'kimodo'))
 import kimogen  # noqa: E402
@@ -53,6 +56,7 @@ def _load(name):  # by path: on sys.path, this folder's kimodo/ checkout would s
 
 
 loops = _load('loops')
+strikes = _load('strikes')
 ENCODER_URL = 'http://127.0.0.1:9550/'
 JITTER_MAX = kimogen.JITTER_MAX
 CONTACT_FRAC = 0.05  # kimogen's contact gate: feet carry the body in at least this share of the frames
@@ -73,17 +77,22 @@ def gate_sample(j, r, fc, idx, mv, stance, fps):
             g.update(loop_seam=found['seam'], loop_motion=found['motion'],
                      loop_window=[found['start'], found['period']])
             g['score'] += found['seam'] * 10
+    if mv.get('strike'):
+        g.update(strikes.measure(j, r, idx, mv, fps)[0])
     g['pass'] = (not g['nonfinite'] and g['contact_ok'] and g['foot_skate_ok'] and g['jitter_ok']
-                 and g['travel_ok'] and g['apex_ok'] and g['stance_ok'] and g.get('loop_ok', True))
+                 and g['travel_ok'] and g['apex_ok'] and g['stance_ok'] and g.get('loop_ok', True)
+                 and g.get('strike_ok', True))
     return g
 
 
 kimogen.gate_sample = gate_sample
+kimogen.frame_data = strikes.frame_data
 kimogen.best_loop = lambda j, r, *_, **__: ((0, len(j) - 1), 0.0)  # keep the whole take: cut_loop cuts it
 
 
 def run(module, *args):
     """module.main() with args; returns its exit code (argparse errors are already on stderr)."""
+    old_argv = sys.argv
     sys.argv = [module.__file__, *args]
     try:
         module.main()
@@ -91,6 +100,8 @@ def run(module, *args):
         if isinstance(e.code, str):
             raise RuntimeError(e.code) from None
         return e.code or 0
+    finally:
+        sys.argv = old_argv
     return 0
 
 
@@ -134,6 +145,11 @@ def cut_loop(mv):
     skeleton = SOMASkeleton77()
     idx = {n: i for i, n in enumerate(skeleton.bone_order_names)}
     out, M, R2, p02 = loops.cut(z, s, P, skeleton, kimogen.canonicalize, idx)
+    if mv.get('strike'):
+        strike_metrics = strikes.measure(out['posed_joints'], out['root_positions'], idx, mv, int(z['fps']))[0]
+        if not strike_metrics['strike_ok']:
+            raise ValueError(f'{name}: the closed cycle no longer passes its strike gate')
+        g.update(strike_metrics)
     resolved_path = os.path.join(kimogen.MOVES_OUT, name + '.resolved_constraints.json')
     if os.path.exists(resolved_path):
         resolved = json.load(open(resolved_path))
@@ -185,11 +201,26 @@ def start_encoder(log_path):
     log = open(log_path, 'w')
     proc = subprocess.Popen([sys.executable, '-P', '-m', 'kimodo.scripts.run_text_encoder_server'], stdout=log,
                             stderr=subprocess.STDOUT, env={**os.environ, 'GRADIO_SERVER_NAME': '127.0.0.1'})
-    while not encoder_up():
-        if proc.poll() is not None:
-            raise RuntimeError('text encoder service failed:\n' + ''.join(open(log_path).readlines()[-20:]))
-        time.sleep(5)
+    log.close()
+    deadline = time.monotonic() + 600
+    try:
+        while not encoder_up():
+            if proc.poll() is not None or time.monotonic() >= deadline:
+                raise RuntimeError('text encoder service failed or timed out:\n' + ''.join(open(log_path).readlines()[-20:]))
+            time.sleep(5)
+    except BaseException:
+        stop_encoder(proc)
+        raise
     return proc
+
+
+def stop_encoder(proc):
+    proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 def main(spec_path, out_dir):
@@ -199,7 +230,13 @@ def main(spec_path, out_dir):
     moves = spec.get('moves') if isinstance(spec, dict) else None
     if not isinstance(moves, list) or not moves or not all(isinstance(m, dict) for m in moves):
         raise ValueError(f'{spec_path}: expected {{"moves": [{{"name", "prompt", "duration", ...}}, ...]}}')
+    for mv in moves:
+        if not isinstance(mv.get('name'), str) or not kimogen.SAFE_MOVE_NAME.fullmatch(mv['name']):
+            raise ValueError('move names must contain only letters, numbers, _ and -')
+        strikes.validate(mv)
     by_name = {m.get('name'): m for m in moves}
+    if len(by_name) != len(moves):
+        raise ValueError('move names must be unique')
     bookended = [m for m in moves if m.get('stance_bookend')]
     stance = spec.get('stance', 'idle_stance')
     if bookended and (stance not in by_name or by_name[stance].get('stance_bookend')):
@@ -217,6 +254,8 @@ def main(spec_path, out_dir):
         k = {'move': mv, 'fps': spec.get('fps')}
         if mv.get('loop'):
             k['loop_cut'] = loops.VERSION
+        if mv.get('strike'):
+            k['strike_gate'] = strikes.VERSION
         if mv.get('constraints_file'):
             k['constraints_file'] = hashlib.sha1(
                 open(os.path.join(os.path.dirname(spec_path), mv['constraints_file']), 'rb').read()).hexdigest()
@@ -246,7 +285,7 @@ def main(spec_path, out_dir):
                     state.pop(name, None)
                     if not os.path.exists(rep) or os.path.getmtime(rep) < t_call:
                         continue  # not reached (a crash): generated again next time
-                    if not os.path.exists(npz):
+                    if not json.load(open(rep)).get('accepted') or not os.path.exists(npz):
                         rejected[name] = f'no sample passed ({why(name)})'
                         continue
                     try:
@@ -286,10 +325,17 @@ def main(spec_path, out_dir):
             generate(todo)
     finally:
         if encoder is not None:
-            encoder.terminate()
-            encoder.wait()
+            stop_encoder(encoder)
     if generated or rejected:
         run(kimogen, 'report')
+        for mv in moves:
+            report_path = os.path.join(kimogen.MOVES_OUT, mv['name'] + '.json')
+            if mv.get('strike') and os.path.isfile(report_path):
+                with open(report_path) as f:
+                    g = json.load(f).get('gates', {})
+                print(f'[strike] {mv["name"]}: {g.get("strike_tip", "?")}, '
+                      f'speed {g.get("strike_speed", "?")} m/s, excursion {g.get("strike_excursion", "?")} m, '
+                      f'pass={g.get("strike_ok", False)}', file=sys.stderr)
 
     for name in rejected:  # an older accepted clip of a now rejected move is not baked
         npz = os.path.join(kimogen.MOVES_OUT, name + '.npz')
@@ -297,15 +343,18 @@ def main(spec_path, out_dir):
             os.remove(npz)
     baked = [mv['name'] for mv in moves if done(mv)]
     result = {'output': out_dir, 'moves': baked, 'generated': generated, 'rejected': list(rejected)}
+    manifest_path = os.path.join(out_dir, 'manifest.json')
+    old = json.load(open(manifest_path))['moves'] if os.path.exists(manifest_path) else []
     if baked:
-        manifest_path = os.path.join(out_dir, 'manifest.json')
-        old = json.load(open(manifest_path))['moves'] if os.path.exists(manifest_path) else []
         if run(bake_kimodo, '--spec', spec_path, '--in', kimogen.MOVES_OUT, '--web', out_dir,
                *(['--allow-missing'] if rejected else [])):
             raise RuntimeError('bake failed (see stderr)')
-        for mv in old:  # clips of moves no longer in the set
-            if mv['name'] not in baked and os.path.exists(os.path.join(out_dir, mv['file'])):
-                os.remove(os.path.join(out_dir, mv['file']))
+    else:
+        # A fully rejected replacement must not expose the previous accepted set to add-moves.
+        json.dump({'moves': [], 'source': 'kimodo'}, open(manifest_path, 'w'), indent=1)
+    for mv in old:
+        if mv['name'] not in baked and os.path.exists(os.path.join(out_dir, mv['file'])):
+            os.remove(os.path.join(out_dir, mv['file']))
     if rejected:
         for name, reason in rejected.items():
             print(f'[reject] {name}: {reason}', file=sys.stderr)
@@ -317,7 +366,7 @@ def main(spec_path, out_dir):
 
 
 if __name__ == '__main__':
-    ap = argparse.ArgumentParser(description='Generate and bake a Kimodo move set from a spec.')
+    ap = ArgumentParser(description='Generate and bake a Kimodo move set from a spec.')
     ap.add_argument('spec')
     ap.add_argument('out_dir')
     ap.add_argument('--json', action='store_true')

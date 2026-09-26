@@ -20,6 +20,9 @@ import argparse
 os.environ.setdefault('OPENCV_IO_ENABLE_OPENEXR', '1')
 os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from cli_args import ArgumentParser
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, 'TRELLIS.2'))
 sys.path.insert(0, ROOT)
@@ -87,7 +90,7 @@ def save_preview(mesh, path: str, resolution: int = 512):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('images', nargs='+')
     p.add_argument('-o', '--out', default=os.path.join(ROOT, 'outputs'))
     p.add_argument('--type', default='1024_cascade', choices=list(NEEDED_MODELS))
@@ -109,6 +112,11 @@ def main():
     os.dup2(2, 1)
 
     try:
+        for path in args.images:
+            if not os.path.isfile(path):
+                raise ValueError(f'input not found: {path}')
+        if min(args.faces, args.tex, args.max_tokens) <= 0 or (args.steps is not None and args.steps <= 0):
+            raise ValueError('faces, tex, max-tokens and steps must be positive')
         import torch
         import o_voxel
         import lowmem

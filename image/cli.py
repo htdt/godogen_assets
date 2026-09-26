@@ -18,6 +18,9 @@ import json
 import os
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from cli_args import ArgumentParser
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
@@ -50,7 +53,10 @@ def parse_size(size: str | None) -> tuple[int, int] | None:
         return None
     try:
         w, h = size.lower().split("x")
-        return int(w), int(h)
+        w, h = int(w), int(h)
+        if min(w, h) <= 0 or w % 32 or h % 32:
+            raise ValueError
+        return w, h
     except ValueError:
         raise SystemExit(f"--size must look like 1024x1024, got {size!r}")
 
@@ -120,7 +126,7 @@ def cmd_info(ns: argparse.Namespace) -> int:
     except Exception as e:  # noqa: BLE001
         info["import_error"] = f"{type(e).__name__}: {e}"
     if ns.json:
-        print(json.dumps(info, indent=2))
+        print(json.dumps(info))
     else:
         for k, v in info.items():
             print(f"{k:20s} {v}")
@@ -128,7 +134,7 @@ def cmd_info(ns: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="qwen-image", description=__doc__,
+    p = ArgumentParser(prog="qwen-image", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -165,4 +171,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (Exception, SystemExit) as e:
+        if isinstance(e, SystemExit) and isinstance(e.code, (int, type(None))):
+            raise
+        message = str(e)
+        print(f'qwen-image: {message}', file=sys.stderr)
+        if '--json' in sys.argv:
+            print(json.dumps({'error': message}))
+        sys.exit(1)

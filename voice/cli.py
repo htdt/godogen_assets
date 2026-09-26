@@ -32,6 +32,9 @@ import time
 from datetime import datetime
 from typing import Any
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from cli_args import ArgumentParser
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DESIGN_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
 CLONE_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
@@ -247,7 +250,7 @@ def cmd_info(ns: argparse.Namespace) -> int:
         except Exception as e:  # noqa: BLE001
             info["import_error"] = f"{type(e).__name__}: {e}"
     if ns.json:
-        print(json.dumps(info, indent=2))
+        print(json.dumps(info))
     else:
         for k, v in info.items():
             print(f"{k:16s} {v}")
@@ -255,7 +258,7 @@ def cmd_info(ns: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="qwen-tts", description=__doc__,
+    p = ArgumentParser(prog="qwen-tts", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
 

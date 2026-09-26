@@ -23,7 +23,7 @@ name = os.path.splitext(os.path.basename(glb))[0]
 os.makedirs(out_dir, exist_ok=True)
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.import_scene.gltf(filepath=glb)
+bpy.ops.import_scene.gltf(filepath=glb, disable_bone_shape=True)
 meshes = [o for o in bpy.context.scene.objects if o.type == 'MESH']
 
 # ---- stats ----
@@ -133,3 +133,5 @@ for mode in ('tex', 'clay'):
 with open(os.path.join(out_dir, f'{name}_stats.json'), 'w') as f:
     json.dump(stats, f, indent=2)
 print('STATS ' + json.dumps(stats))
+if 'asset_result' in globals():
+    asset_result({'output': out_dir, 'stats': stats})

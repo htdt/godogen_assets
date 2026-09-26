@@ -1,4 +1,4 @@
 torch==2.14.0
 qwen-tts @ git+https://github.com/QwenLM/Qwen3-TTS@022e286b98fbec7e1e916cb940cdf532cd9f488e
-soundfile>=0.13
-numpy
+soundfile==0.14.0
+numpy==2.5.3

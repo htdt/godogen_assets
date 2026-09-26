@@ -20,11 +20,13 @@ res = int(argv[argv.index('--res') + 1]) if '--res' in argv else 384
 save = argv[argv.index('--save') + 1] if '--save' in argv else None
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
-(bpy.ops.import_scene.fbx if src.lower().endswith('.fbx') else bpy.ops.import_scene.gltf)(filepath=src)
+if src.lower().endswith('.fbx'):
+    bpy.ops.import_scene.fbx(filepath=src)
+else:
+    bpy.ops.import_scene.gltf(filepath=src, disable_bone_shape=True)
 scene = bpy.context.scene
 arm = next(o for o in scene.objects if o.type == 'ARMATURE')
-# skip the glTF importer's bone display shapes (a 1 m icosphere at the origin that would skew the framing)
-meshes = [o for o in scene.objects if o.type == 'MESH' and len(o.data.vertices) > 100]
+meshes = [o for o in scene.objects if o.type == 'MESH']
 if arm.animation_data:
     arm.animation_data.action = None
     for tr in arm.animation_data.nla_tracks:
@@ -174,3 +176,6 @@ strip.filepath_raw = out
 strip.file_format = 'PNG'
 strip.save()
 print('WROTE', out, [p[0] for p in POSES])
+
+if 'asset_result' in globals():
+    asset_result({'output': out})

@@ -11,10 +11,12 @@
 # stdout: DIR (or a JSON object with --json); progress and the gate table on stderr; exit 0 / 1.
 set -euo pipefail
 root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+source "$root/tools/launcher.sh"
 PY=$root/motion/kimenv/bin/python
 [[ ${1:-} = -h || ${1:-} = --help ]] && { sed -n '2,11p' "$0" | cut -c3-; exit 0; }
 [[ -x $PY ]] || { echo "gen-moves: not installed, run $root/setup.sh motion" >&2; exit 1; }
-unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME PYTHONUSERBASE VIRTUAL_ENV
+export PYTHONNOUSERSITE=1
 
 out=""; json=(); pos=()
 while [[ $# -gt 0 ]]; do
@@ -32,5 +34,5 @@ spec=${pos[0]}
 out=${out:-$root/motion/outputs/$(basename "$spec" .json)}
 
 # the encoder runs as a service (gen_moves.py starts it when needed); api mode never loads it in-process
-export TEXT_ENCODERS_DIR=$root/motion/text_encoders TEXT_ENCODER_DEVICE=cpu TEXT_ENCODER_MODE=api
+export TEXT_ENCODERS_DIR=$root/motion/text_encoders TEXT_ENCODER_DEVICE=${TEXT_ENCODER_DEVICE:-cpu} TEXT_ENCODER_MODE=api
 exec "$PY" -P "$root/motion/gen_moves.py" "$spec" "$out" "${json[@]}"

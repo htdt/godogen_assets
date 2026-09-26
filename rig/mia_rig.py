@@ -23,13 +23,16 @@ import json
 import shutil
 import argparse
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from cli_args import ArgumentParser
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 MIA_DIR = os.path.join(HERE, 'Make-It-Animatable')
 BLENDER = os.environ.get('BLENDER') or os.path.join(os.path.dirname(HERE), 'deps', 'blender', 'blender')
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('input')
     p.add_argument('-o', '--out', default=None)
     p.add_argument('--anim', default=os.path.join(MIA_DIR, 'data', 'Standard Run.fbx'),
@@ -100,7 +103,7 @@ def rig(args):
     rigged = os.path.join(out, f'{name}_rigged.glb')
 
     def blender(script, *script_args):
-        subprocess.run([BLENDER, '-b', '--factory-startup', '-P', os.path.join(HERE, script), '--', *script_args],
+        subprocess.run([BLENDER, '-b', '--factory-startup', '--python-exit-code', '1', '-P', os.path.join(HERE, script), '--', *script_args],
                        check=True, stdout=subprocess.DEVNULL)
 
     blender('normalize_rig.py', os.path.join(mia_out, 'rest.glb'), rigged)  # ground + centre (translation only)

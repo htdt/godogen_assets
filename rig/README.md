@@ -38,6 +38,8 @@ Limits: humanoids only (two arms, two legs, one spine); anything held near the h
 Poses other than T/A work (MIA resets them), but arms away from the body rig best. Rigid parts of the body mesh
 (pauldrons, large armour plates) are skinned like flesh and bend and stretch with the limb: for rigid ones, generate
 them as separate props and attach them to a bone in the engine.
+For held weapons, use an animation authored for that weapon and hand; attachment only makes the prop follow the
+wrist. See [combat moves and prop previews](../motion/README.md#combat-and-held-props) for generation gates and Godot setup.
 
 Check a rig: `asset-blender tools/pose_test.py -- out/rig/hero_rigged.glb poses.png` (rest, arms down, arms up,
 guard, squat, twist + kick) and, for a clip, `asset-blender tools/render_anim.py -- out/rig/hero_anim.glb anim.png`.

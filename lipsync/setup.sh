@@ -2,7 +2,8 @@
 # lipsync: MediaPipe venv + Face Landmarker model, Rhubarb Lip Sync. Uses the Blender from ../setup.sh blender.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
-unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME PYTHONUSERBASE VIRTUAL_ENV
+export PYTHONNOUSERSITE=1
 
 [[ -x .venv/bin/python ]] || uv venv -q --python 3.12 .venv   # mediapipe does not install into Blender's Python
 uv pip install -q --python .venv/bin/python mediapipe==1.0.1

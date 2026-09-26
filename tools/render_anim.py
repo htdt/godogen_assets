@@ -3,6 +3,7 @@ Render evenly spaced frames of an animated, skinned GLB/FBX with Blender (to che
 
     asset-blender tools/render_anim.py -- anim.glb out.png [--frames 8] [--res 384] [--yaw 30]
         [--action NAME]      (a GLB with several clips: render the one named NAME, e.g. a Kimodo move)
+        [--prop sword.glb --bone RightHand --grip 0,-0.4,0 --scale 1 --offset 0,0,0 --rotation 0,0,0]
 
 Writes one horizontal strip PNG (frame i left to right). The camera is fixed and framed on the whole animation's
 bounding box so root motion stays visible.
@@ -11,57 +12,85 @@ import bpy
 import sys
 import os
 import math
+import argparse
 from mathutils import Vector
 
 argv = sys.argv[sys.argv.index('--') + 1:]
-src, out = argv[0], argv[1]
-nframes = int(argv[argv.index('--frames') + 1]) if '--frames' in argv else 8
-res = int(argv[argv.index('--res') + 1]) if '--res' in argv else 384
-yaw_deg = float(argv[argv.index('--yaw') + 1]) if '--yaw' in argv else 30.0
-want = argv[argv.index('--action') + 1] if '--action' in argv else None
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from attachments import attach, triple
+ap = argparse.ArgumentParser(description=__doc__)
+ap.add_argument('src')
+ap.add_argument('out')
+ap.add_argument('--frames', type=int, default=8)
+ap.add_argument('--res', type=int, default=384)
+ap.add_argument('--yaw', type=float, default=30)
+ap.add_argument('--action')
+ap.add_argument('--prop')
+ap.add_argument('--bone', default='RightHand')
+ap.add_argument('--grip', type=triple, default=(0, 0, 0))
+ap.add_argument('--offset', type=triple, default=(0, 0, 0))
+ap.add_argument('--rotation', type=triple, default=(0, 0, 0))
+ap.add_argument('--scale', type=float, default=1)
+args = ap.parse_args(argv)
+src, out, nframes, res, yaw_deg, want = args.src, args.out, args.frames, args.res, args.yaw, args.action
+if nframes < 1 or res < 1:
+    raise ValueError('--frames and --res must be positive')
+os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 if src.lower().endswith('.fbx'):
     bpy.ops.import_scene.fbx(filepath=src)
 else:
-    bpy.ops.import_scene.gltf(filepath=src)
+    bpy.ops.import_scene.gltf(filepath=src, disable_bone_shape=True)
 scene = bpy.context.scene
-# skip the glTF importer's bone display shapes (a 1 m icosphere at the origin that would skew the framing)
-meshes = [o for o in scene.objects if o.type == 'MESH' and len(o.data.vertices) > 100]
 arms = [o for o in scene.objects if o.type == 'ARMATURE']
 
-# frame range from the armature's action (glTF import may put it in NLA tracks)
-f0, f1 = scene.frame_start, scene.frame_end
-for a in arms:
-    ad = a.animation_data
-    act = ad.action if ad and ad.action else None
-    if want:
-        act = next((x for x in bpy.data.actions if x.name == want or x.name.startswith(want + '_')), None)
-        if act is None:
-            sys.exit(f'no action {want!r}; have: {[x.name for x in bpy.data.actions]}')
-        ad = ad or a.animation_data_create()
-        for tr in ad.nla_tracks:
-            tr.mute = True
-        ad.action = act
-        if hasattr(act, 'slots') and act.slots:
-            ad.action_slot = act.slots[0]
-    if act is None and ad and ad.nla_tracks:
-        for tr in ad.nla_tracks:
-            for st in tr.strips:
-                act = st.action
-                ad.action = act
-                tr.mute = True
-                break
-            if act:
-                break
-    if act:
-        f0, f1 = int(act.frame_range[0]), int(act.frame_range[1])
+# glTF imports clips as NLA strips, including separate slots for morph weights. Activate only one clip everywhere.
+owners = list(scene.objects) + [o.data.shape_keys for o in scene.objects if o.type == 'MESH' and o.data.shape_keys]
+available = {tr.name for o in owners if o.animation_data for tr in o.animation_data.nla_tracks}
+available.update(a.name for a in bpy.data.actions)
+if want is None:
+    want = next((o.animation_data.action.name for o in arms if o.animation_data and o.animation_data.action), None)
+    want = want or next(iter(sorted(available)), None)
+if want is None or want not in available:
+    raise ValueError(f'no action {want!r}; have: {sorted(available)}')
+ranges = []
+for owner in owners:
+    ad = owner.animation_data
+    if not ad:
+        continue
+    active = (ad.action, ad.action_slot) if ad.action and ad.action.name == want else None
+    for track in ad.nla_tracks:
+        track.mute = True
+        for strip in track.strips:
+            if strip.action and (track.name == want or strip.action.name == want):
+                active = (strip.action, strip.action_slot)
+    ad.action = None
+    if active:
+        ad.action, ad.action_slot = active
+        ranges.append(active[0].frame_range)
+if not ranges:
+    raise ValueError(f'action {want!r} has no bound object slots')
+f0, f1 = min(r[0] for r in ranges), max(r[1] for r in ranges)
+update_prop = lambda: None
+if args.prop:
+    if len(arms) != 1:
+        raise ValueError('--prop needs exactly one character armature')
+    update_prop = attach(arms[0], os.path.abspath(args.prop), args.bone, args.offset, args.rotation, args.scale, args.grip)
+meshes = [o for o in scene.objects if o.type == 'MESH']
+
+
+def frame_set(f):
+    scene.frame_set(f)
+    update_prop()
+
+
 frames = [round(f0 + (f1 - f0) * i / max(nframes - 1, 1)) for i in range(nframes)]
 
 # bounding box over all sampled frames (evaluated, i.e. deformed)
 lo, hi = Vector((1e9,) * 3), Vector((-1e9,) * 3)
 for f in frames:
-    scene.frame_set(f)
+    frame_set(f)
     dg = bpy.context.evaluated_depsgraph_get()
     for o in meshes:
         ev = o.evaluated_get(dg)
@@ -112,7 +141,7 @@ cam.rotation_euler = (center - cam.location).to_track_quat('-Z', 'Y').to_euler()
 
 tmp = []
 for i, f in enumerate(frames):
-    scene.frame_set(f)
+    frame_set(f)
     scene.render.filepath = f'{out}.f{i}.png'
     bpy.ops.render.render(write_still=True)
     tmp.append(scene.render.filepath)
@@ -133,3 +162,6 @@ strip.filepath_raw = out
 strip.file_format = 'PNG'
 strip.save()
 print('WROTE', out, 'frames', frames)
+
+if 'asset_result' in globals():
+    asset_result({'output': out})

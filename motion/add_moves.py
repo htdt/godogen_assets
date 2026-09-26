@@ -19,7 +19,13 @@ import re
 import sys
 import json
 import struct
+import shutil
+import tempfile
+from pathlib import Path
 import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
+from cli_args import ArgumentParser
 
 # Mixamo bone (prefix stripped) -> SOMA joint. Fingers: SOMA's first finger joint is the metacarpal.
 MAP = {'Hips': 'Hips', 'Spine': 'Spine1', 'Spine1': 'Spine2', 'Spine2': 'Chest', 'Neck': 'Neck1', 'Head': 'Head'}
@@ -74,11 +80,17 @@ def qrot(q, v):
 
 
 def qfrom_mat(m):
-    w = np.sqrt(max(0.0, 1 + m[0, 0] + m[1, 1] + m[2, 2])) / 2
-    x = np.copysign(np.sqrt(max(0.0, 1 + m[0, 0] - m[1, 1] - m[2, 2])) / 2, m[2, 1] - m[1, 2])
-    y = np.copysign(np.sqrt(max(0.0, 1 - m[0, 0] + m[1, 1] - m[2, 2])) / 2, m[0, 2] - m[2, 0])
-    z = np.copysign(np.sqrt(max(0.0, 1 - m[0, 0] - m[1, 1] + m[2, 2])) / 2, m[1, 0] - m[0, 1])
-    q = np.array([x, y, z, w])
+    # Choose the largest component: antisymmetric signs alone lose the axis signs at exactly 180 degrees.
+    q = np.empty(4)
+    if np.trace(m) > 0:
+        s = 2 * np.sqrt(1 + np.trace(m))
+        q[:] = [(m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s,
+                (m[1, 0] - m[0, 1]) / s, s / 4]
+    else:
+        i = int(np.argmax(np.diag(m)))
+        j, k = (i + 1) % 3, (i + 2) % 3
+        s = 2 * np.sqrt(1 + m[i, i] - m[j, j] - m[k, k])
+        q[i], q[j], q[k], q[3] = s / 4, (m[j, i] + m[i, j]) / s, (m[k, i] + m[i, k]) / s, (m[k, j] - m[j, k]) / s
     return q / np.linalg.norm(q)
 
 
@@ -90,6 +102,8 @@ def qto_mat(q):
 
 
 def qbetween(a, b):
+    if min(np.linalg.norm(a), np.linalg.norm(b)) < 1e-8:
+        raise ValueError('cannot align a zero-length bone')
     a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
     q = np.array([*np.cross(a, b), 1 + a @ b])
     if q[3] < 1e-8:  # opposite: any perpendicular axis
@@ -100,13 +114,19 @@ def qbetween(a, b):
 
 # ---- GLB
 def read_glb(path):
-    data = open(path, 'rb').read()
-    magic, _, length = struct.unpack_from('<III', data)
-    if magic != 0x46546C67:
-        raise ValueError(f'{path}: not a GLB')
+    data = Path(path).read_bytes()
+    if len(data) < 20:
+        raise ValueError(f'{path}: truncated GLB')
+    magic, version, length = struct.unpack_from('<III', data)
+    if magic != 0x46546C67 or version != 2 or length != len(data):
+        raise ValueError(f'{path}: not a complete glTF 2 GLB')
     off, gltf, blob = 12, None, bytearray()
     while off < length:
+        if off + 8 > length:
+            raise ValueError(f'{path}: truncated GLB chunk')
         size, kind = struct.unpack_from('<II', data, off)
+        if size % 4 or off + 8 + size > length:
+            raise ValueError(f'{path}: invalid GLB chunk length')
         chunk = data[off + 8:off + 8 + size]
         off += 8 + size
         if kind == 0x4E4F534A:
@@ -115,17 +135,29 @@ def read_glb(path):
             blob = bytearray(chunk)
     if gltf is None or len(gltf.get('buffers', [])) != 1 or 'uri' in gltf['buffers'][0]:
         raise ValueError(f'{path}: expected one embedded buffer')
+    if gltf['buffers'][0]['byteLength'] > len(blob):
+        raise ValueError(f'{path}: truncated embedded buffer')
     return gltf, blob
 
 
 def write_glb(path, gltf, blob):
     blob += b'\0' * (-len(blob) % 4)
     gltf['buffers'][0]['byteLength'] = len(blob)
-    js = json.dumps(gltf, separators=(',', ':')).encode()
+    js = json.dumps(gltf, separators=(',', ':'), allow_nan=False).encode()
     js += b' ' * (-len(js) % 4)
-    with open(path, 'wb') as f:
-        f.write(struct.pack('<III', 0x46546C67, 2, 28 + len(js) + len(blob)))
-        f.write(struct.pack('<II', len(js), 0x4E4F534A) + js + struct.pack('<II', len(blob), 0x004E4942) + blob)
+    # Also safe when OUT is the input: a failed write must not truncate the character.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), suffix='.glb')
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(struct.pack('<III', 0x46546C67, 2, 28 + len(js) + len(blob)))
+            f.write(struct.pack('<II', len(js), 0x4E4F534A) + js + struct.pack('<II', len(blob), 0x004E4942) + blob)
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)  # mkstemp creates private files
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
 def add_accessor(gltf, blob, arr, kind):
@@ -149,10 +181,29 @@ def node_matrix(n):
     return m
 
 
+def rotation(m):
+    scale = np.linalg.norm(m[:3, :3], axis=0)
+    if not np.isfinite(m).all() or min(scale) < 1e-8 or not np.allclose(scale, scale[0], rtol=1e-4):
+        raise ValueError('skeleton transforms need finite, positive uniform scale; apply transforms before rigging')
+    r = m[:3, :3] / scale
+    if np.linalg.det(r) < 0 or not np.allclose(r.T @ r, np.eye(3), atol=1e-4):
+        raise ValueError('mirrored or sheared skeleton; apply transforms before rigging')
+    return qfrom_mat(r)
+
+
 def main(rig_path, out_path, rm_path, *baked_dirs):
     gltf, blob = read_glb(rig_path)
     nodes = gltf['nodes']
     parent = {c: i for i, n in enumerate(nodes) for c in n.get('children', [])}
+    if len(parent) != sum(len(n.get('children', [])) for n in nodes):
+        raise ValueError('node has more than one parent')
+    for i in range(len(nodes)):
+        seen = set()
+        while i in parent:
+            if i in seen:
+                raise ValueError('node hierarchy contains a cycle')
+            seen.add(i)
+            i = parent[i]
     world = {}
 
     def wm(i):
@@ -162,35 +213,65 @@ def main(rig_path, out_path, rm_path, *baked_dirs):
 
     if not gltf.get('skins'):
         raise ValueError(f'{rig_path}: no skinned skeleton (rig it with mia-rig first)')
-    joints = set(gltf['skins'][0]['joints'])
-    by = {strip(nodes[j].get('name', '')): j for j in joints}
+    # A mouth/prop skin may precede the body skin. Shared joints count once; two humanoids are ambiguous.
+    joints = set(j for skin in gltf['skins'] for j in skin['joints'])
+    by = {}
+    for j in sorted(joints):
+        name = strip(nodes[j].get('name', ''))
+        if name in MAP and name in by:
+            raise ValueError(f'ambiguous bone {name}: expected one humanoid skeleton')
+        by[name] = j
     missing = [b for b in REQUIRED if b not in by]
     if missing:
         raise ValueError(f'{rig_path}: not a Mixamo-named humanoid rig, missing ' + ', '.join(missing))
     hips = by['Hips']
-    order, stack = [], [hips]  # joints under the hips, parents first
+    order, stack = [], [hips]  # include helper nodes between joints, parents first
     while stack:
         i = stack.pop()
+        if i in order:
+            raise ValueError('skeleton hierarchy is not a tree')
         order.append(i)
-        stack += [c for c in nodes[i].get('children', []) if c in joints]
-    rot = lambda m: qfrom_mat(m[:3, :3] / np.linalg.norm(m[:3, :3], axis=0))  # noqa: E731 (uniform scale)
-    bind_w = {i: rot(wm(i)) for i in order}
+        stack += nodes[i].get('children', [])
+    if any(by[b] not in order for b in REQUIRED):
+        raise ValueError('all humanoid bones must descend from Hips')
+    # Only ancestors of joints participate in retargeting; attached prop scales are unrestricted.
+    needed = set()
+    for j in joints.intersection(order):
+        while j != hips:
+            needed.add(j)
+            j = parent[j]
+    order = [i for i in order if i == hips or i in needed]
+    bind_w = {i: rotation(wm(i)) for i in order}
     pos_w = {i: wm(i)[:3, 3] for i in order}
-    hips_parent_w = rot(wm(parent[hips])) if hips in parent else np.array([0, 0, 0, 1.0])
+    hips_parent_w = rotation(wm(parent[hips])) if hips in parent else np.array([0, 0, 0, 1.0])
     hips_parent_inv = np.linalg.inv(wm(parent[hips])) if hips in parent else np.eye(4)
-    keyed = [i for i in order if strip(nodes[i]['name']) in MAP]
+    keyed = [i for i in order if i in joints and strip(nodes[i].get('name', '')) in MAP]
+    for i in keyed:
+        if 'matrix' in nodes[i]:  # glTF forbids matrix on a node targeted by animation
+            m = node_matrix(nodes[i])
+            nodes[i].update(translation=m[:3, 3].tolist(), rotation=rotation(m).tolist(),
+                            scale=np.linalg.norm(m[:3, :3], axis=0).tolist())
+            del nodes[i]['matrix']
     char_leg = pos_w[hips][1] - (pos_w[by['LeftFoot']][1] + pos_w[by['RightFoot']][1]) / 2
+    if char_leg <= 1e-6:
+        raise ValueError('rig must be upright in glTF Y-up with hips above feet')
 
     moves = {}  # name -> (baked dir, manifest entry)
     for baked in baked_dirs:
-        manifest = json.load(open(os.path.join(baked, 'manifest.json')))
+        manifest = json.loads(Path(baked, 'manifest.json').read_text())
         moves.update((m['name'], (baked, m)) for m in (manifest['moves'] if isinstance(manifest, dict) else manifest))
+    if not moves:
+        raise ValueError('no accepted moves in the baked move sets')
     anims = [a for a in gltf.get('animations', []) if a.get('name') not in moves]
     rootmotion = {'scaleRoot': None, 'clips': {}}
 
     for baked, mv in moves.values():
-        clip = json.load(open(os.path.join(baked, mv.get('file', mv['name'] + '.json'))))
+        clip = json.loads(Path(baked, mv.get('file', mv['name'] + '.json')).read_text())
         idx = {n: k for k, n in enumerate(clip['names'])}
+        missing = sorted({MAP[strip(nodes[i]['name'])] for i in keyed if strip(nodes[i]['name']) in REQUIRED}
+                         .union({'LeftToeBase', 'RightToeBase'}) - idx.keys())
+        if missing:
+            raise ValueError(f'{mv["name"]}: source clip is missing joints: {", ".join(missing)}')
         # finger joints hang off the straightened hand frame: they take the hand's rest
         rest_q = np.array([clip['restQuat'][idx[m.group(1) + 'Hand'] if (m := re.match(r'(Left|Right)Hand.', n)) else k]
                            for k, n in enumerate(clip['names'])], float)
@@ -198,34 +279,47 @@ def main(rig_path, out_path, rm_path, *baked_dirs):
         pos = np.array(clip['pos'], float)               # (N, J, 3)
         rest = np.array(clip['rest'], float)
         n_frames, fps = len(quat), clip.get('fps', 30)
+        nj = len(idx)
+        if (nj != len(clip['names']) or n_frames < 2 or not np.isfinite(fps) or fps <= 0
+                or quat.shape != (n_frames, nj, 4) or pos.shape != (n_frames, nj, 3)
+                or rest.shape != (nj, 3) or rest_q.shape != (nj, 4)
+                or not all(np.isfinite(a).all() for a in (quat, pos, rest, rest_q))):
+            raise ValueError(f'{mv["name"]}: invalid clip shapes, frame rate or non-finite data')
+        for q in (quat, rest_q):
+            norm = np.linalg.norm(q, axis=-1, keepdims=True)
+            if np.any(norm < 1e-8):
+                raise ValueError(f'{mv["name"]}: zero quaternion')
+            q /= norm
         yaw = qinv(rest_q[idx['Hips']])                  # source rest heading -> the rig's (+Z)
         delta = qmul(qmul(yaw, qmul(quat, qinv(rest_q))), qinv(yaw))
         src_leg = rest[idx['Hips'], 1] - (rest[idx['LeftFoot'], 1] + rest[idx['RightFoot'], 1]) / 2
+        if src_leg <= 1e-6:
+            raise ValueError(f'{mv["name"]}: source hips must be above feet')
         scale = char_leg / src_leg
         rootmotion['scaleRoot'] = round(float(scale), 4)
 
         world_q, local_q = {}, {}
         for i in order:
-            name = strip(nodes[i]['name'])
+            name = strip(nodes[i].get('name', ''))
             pw = world_q[parent[i]] if i != hips else np.broadcast_to(hips_parent_w, (n_frames, 4))
             if i in keyed and MAP[name] in idx:
                 bind = bind_w[i]
                 side = next((s for s in ('Left', 'Right') if name.startswith(s)), '')
                 part = name[len(side):]
                 child = by.get(f'{side}{ALIGN[part]}') if side and part in ALIGN else None
-                if child is not None:  # aim the bone along the source T-pose
+                if child is not None and MAP[f'{side}{ALIGN[part]}'] in idx:
                     src_dir = qrot(yaw, rest[idx[MAP[f'{side}{ALIGN[part]}']]] - rest[idx[MAP[name]]])
                     bind = qmul(qbetween(pos_w[child] - pos_w[i], src_dir), bind)
                 world_q[i] = qmul(delta[:, idx[MAP[name]]], bind)
                 local_q[i] = qmul(qinv(pw), world_q[i])
             else:
-                world_q[i] = qmul(pw, np.array(nodes[i].get('rotation', [0, 0, 0, 1.0])))
+                world_q[i] = qmul(pw, rotation(node_matrix(nodes[i])))
         # in place: hips keep their bind X/Z, the height follows the source
         rise = (pos[:, idx['Hips'], 1] - rest[idx['Hips'], 1]) * scale
         hips_w = np.tile(pos_w[hips], (n_frames, 1))
         hips_w[:, 1] += rise
         hips_local = (hips_parent_inv @ np.c_[hips_w, np.ones(n_frames)].T).T[:, :3]
-        path = qrot(yaw, pos[:, idx['Hips']] - rest[idx['Hips']]) * scale
+        path = qrot(yaw, pos[:, idx['Hips']] - pos[0, idx['Hips']]) * scale
 
         for q in local_q.values():  # neighbouring keys on the same hemisphere, for LINEAR slerp
             for f in range(1, n_frames):
@@ -241,6 +335,7 @@ def main(rig_path, out_path, rm_path, *baked_dirs):
         loop = bool(mv.get('loop', False))
         rootmotion['clips'][mv['name']] = {
             'fps': fps, 'numFrames': n_frames, 'loop': loop,
+            'scaleRoot': round(float(scale), 4),
             'frameData': mv.get('frame_data'),
             'pelvisXZ': np.round(path[:, [0, 2]], 4).tolist(),
             'hipY': np.round(hips_w[:, 1], 4).tolist(),
@@ -255,10 +350,38 @@ def main(rig_path, out_path, rm_path, *baked_dirs):
     print(f'{len(moves)} moves, {len(keyed)} bones keyed, scaleRoot {rootmotion["scaleRoot"]}', file=sys.stderr)
 
 
-if __name__ == '__main__':
-    if len(sys.argv) < 5:
-        sys.exit('usage: python add_moves.py RIG.glb OUT.glb ROOTMOTION.json BAKED_DIR [BAKED_DIR ...]')
+def cli():
+    ap = ArgumentParser(description='Transfer baked Kimodo moves onto one Mixamo character.')
+    ap.add_argument('rig')
+    ap.add_argument('-o', '--out')
+    ap.add_argument('--baked', action='append')
+    ap.add_argument('--json', action='store_true')
+    a = ap.parse_args()
     try:
-        main(*sys.argv[1:])
-    except (ValueError, KeyError, OSError) as e:
-        sys.exit(f'add-moves: {type(e).__name__}: {e}')
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rig = os.path.realpath(a.rig)  # outputs and the face JSON live next to the real file
+        name = os.path.splitext(rig)[0].removesuffix('_rigged').removesuffix('_mouth')
+        out = os.path.abspath(a.out or name + '_moves.glb')
+        rm = os.path.splitext(out)[0].removesuffix('_moves') + '_rootmotion.json'
+        baked = [os.path.abspath(d if os.path.exists(d) else os.path.join(root, d))
+                 for d in (a.baked or ['motion/basic'])]
+        for d in baked:
+            if not os.path.isfile(os.path.join(d, 'manifest.json')):
+                raise ValueError(f'no baked move set at {d} (gen-moves, motion/README.md)')
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        main(rig, out, rm, *baked)
+        face, dst_face = os.path.splitext(rig)[0] + '.face.json', os.path.splitext(out)[0] + '.face.json'
+        if os.path.isfile(face) and os.path.realpath(face) != os.path.realpath(dst_face):
+            shutil.copyfile(face, dst_face)
+        print(json.dumps({'output': out, 'rootmotion': rm, 'baked': baked}) if a.json else out)
+        return 0
+    except (ValueError, KeyError, OSError, TypeError, IndexError) as e:
+        msg = f'{type(e).__name__}: {e}'
+        print(f'add-moves: {msg}', file=sys.stderr)
+        if a.json:
+            print(json.dumps({'error': msg}))
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(cli())

@@ -14,8 +14,8 @@ lipsync --add speak out/talk/hero_moves.glb line.wav -t line.txt         # ... +
 ```
 
 Voice lines come from `qwen-tts` (keep the transcript: `-t` helps Rhubarb). For several lines of one character, clone
-the voice (`qwen-tts clone`), then `lipsync --add` per line. `--add` passes the GLB through Blender; the clips already
-in it come out unchanged (a changed clip length fails the run).
+the voice (`qwen-tts clone`), then `lipsync --add` per line. `--add` re-exports the GLB through Blender, checks that earlier
+clips remain with the same duration, then replaces the output. Reusing a clip name replaces that speech clip.
 
 | Option | |
 |---|---|
@@ -105,3 +105,6 @@ smooths them and keys one action. The code comments carry the details and every 
 
 `../setup.sh lipsync` (after `../setup.sh blender`): a uv venv with MediaPipe (`.venv`), the Face Landmarker model
 (`models/`), Rhubarb Lip Sync 1.14 (`rhubarb/`). Rendering the video needs `ffmpeg`.
+
+Hardware: mouth construction and alignment use the CPU. Video and check renders use the GPU;
+`RENDER_CPU=1` with `--engine cycles` uses CPU rendering when no compatible GPU is available.

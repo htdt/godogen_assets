@@ -25,10 +25,10 @@ hide = argv[argv.index('--hide') + 1] if '--hide' in argv else None  # debug: hi
 face = json.load(open(os.path.splitext(src)[0] + '.face.json'))
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.import_scene.gltf(filepath=src)
+bpy.ops.import_scene.gltf(filepath=src, disable_bone_shape=True)
 scene = bpy.context.scene
 arm = next(o for o in scene.objects if o.type == 'ARMATURE')
-meshes = [o for o in scene.objects if o.type == 'MESH' and (o.parent is not None or len(o.data.vertices) > 100)]
+meshes = [o for o in scene.objects if o.type == 'MESH']
 body = max(meshes, key=lambda o: len(o.data.vertices))
 if arm.animation_data:
     arm.animation_data.action = None
@@ -154,3 +154,6 @@ strip.filepath_raw = out
 strip.file_format = 'PNG'
 strip.save()
 print('WROTE', out, [p[0] for p in POSES], views)
+
+if 'asset_result' in globals():
+    asset_result({'output': out})

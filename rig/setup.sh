@@ -3,7 +3,8 @@
 # FBX2glTF, and the Mixamo skeleton templates. Idempotent. Needs micromamba, git and the Blender from ../setup.sh.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
-unset LD_LIBRARY_PATH PYTHONPATH VIRTUAL_ENV
+unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME PYTHONUSERBASE VIRTUAL_ENV
+export PYTHONNOUSERSITE=1
 E=$PWD/.conda
 MIA_COMMIT=8fb51382ff6da556cdb95cc03a48200603f3a493
 
