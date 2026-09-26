@@ -3,7 +3,8 @@
 Gives a `mia-rig` character a mouth that opens (jaw bone, cut lips, teeth, tongue, dark cavity, two lip shapes) and
 lip-syncs it to a voice line. Automatic, no per-character tuning; faces from TRELLIS.2 (realistic and cartoon) both
 work. Looks right at game distances (head-and-shoulders and wider); a full-screen close-up shows blurry baked lips and
-generic teeth.
+generic teeth. The mouth area (nose to chin, past the corners) is rebuilt from the skin seen from the front, so tusks,
+a beard or piercings there become part of the lips: they move with them and can shift (check `poses.png`).
 
 ```bash
 lipsync out/rig/hero_rigged.glb line.wav -t line.txt -o out/talk/        # mouth rig + "speak" clip, ~2 min
@@ -13,7 +14,8 @@ lipsync --add speak out/talk/hero_moves.glb line.wav -t line.txt         # ... +
 ```
 
 Voice lines come from `qwen-tts` (keep the transcript: `-t` helps Rhubarb). For several lines of one character, clone
-the voice (`qwen-tts clone`), then `lipsync --add` per line.
+the voice (`qwen-tts clone`), then `lipsync --add` per line. `--add` passes the GLB through Blender; the clips already
+in it come out unchanged (a changed clip length fails the run).
 
 | Option | |
 |---|---|
@@ -23,6 +25,7 @@ the voice (`qwen-tts clone`), then `lipsync --add` per line.
 | `--no-render` | skip the video (~1 min instead of ~2) |
 | `--engine eevee\|cycles` | video renderer |
 | `--hinge-depth F` | jaw hinge depth behind the lips in face widths (0.62) |
+| `--face-image IMG` | find the face on IMG instead of the front render: an edit of a failed run's `work/face_front.png` with the same layout (below) |
 | `--face FACE.json` | `--add` only; default `<GLB without .glb>.face.json`, else `<name>_mouth.face.json` beside it |
 | `--json` | `{output, mouth, face, video, check_sheet, seconds}` (`--add`: `{output, clip, face, seconds}`) |
 
@@ -42,8 +45,8 @@ Cost: ~1 % more triangles and ≤ 1.2 MB on a 1024 mesh, +7 % on a 30k mesh; bod
 
 ## In a game
 
-- **Jaw**: bone `mixamorig:Jaw`; open = rotation about its local +X by `jaw × jaw_open_max_rad` on top of the rest
-  rotation.
+- **Jaw**: bone `mixamorig:Jaw` (`mixamorig_Jaw` in Godot, see [rig](../rig/README.md)); open = rotation about its
+  local +X by `jaw × jaw_open_max_rad` on top of the rest rotation.
 - **Lips**: morph targets `wide` and `round` (0..1) on every primitive of the body mesh.
 - **Teeth + tongue**: mesh `mouth_parts`, base colour = vertex colour `COLOR_0` (baked occlusion, since real-time
   renderers do not darken a mouth). three.js and glTFast use it automatically; in Godot make sure vertex colour is
@@ -58,8 +61,10 @@ Cost: ~1 % more triangles and ≤ 1.2 MB on a 1024 mesh, +7 % on a 30k mesh; bod
 The first three come with every run:
 
 1. `work/face_landmarks.png`: the red polyline sits on the lip line from corner to corner. If it does not, nothing
-   downstream can be right: regenerate the image (front-facing, visible face, closed mouth).
-2. The report (last line of `work/mouth_rig.log`, `report` in the face JSON): `landmarks_on_mesh` ≥ 470 of 478,
+   downstream can be right: try `--face-image` (below) or regenerate the image (front-facing, visible face, closed
+   mouth).
+2. The report (last line of `work/mouth_rig.log`, `report` in the face JSON): `landmarks_on_mesh` ≥ 470 of 478 (a
+   run stops when fewer than 80 % land on the head: the face found is something else, a skull on a pauldron),
    `lip_fit_residual` < 0.01, `resurface` not `skipped` with `rim_gaps` 0, `seam_loops` 1, `jaw_open_max_rad`
    0.22-0.42.
 3. `poses.png`: the jaw opens without tearing, teeth visible, `wide` parts the lips, `round` pushes them forward; the
@@ -70,12 +75,25 @@ The first three come with every run:
 6. Contents: `python3 tools/glb_info.py x_speak.glb`: `speak` has 2 channels, morph targets are sparse, `mouth_parts`
    carries `COLOR_0`.
 
-`landmark detection failed` means no face in the front render (helmet, mask, face turned away): regenerate the image.
+`landmark detection failed` means MediaPipe, trained on human faces, sees none in the front render
+(`work/face_front.png`): a stylised face (a heavy brow hiding the eyes, a snout, tusks), a helmet or mask. The mesh
+can still get a mouth: make a copy of the render that reads as a human face without moving anything, and find the
+face there. The landmarks are drawn on the real render for check 1.
+
+```bash
+qwen-image edit -i out/talk/work/face_front.png "Make this face a realistic human face for face tracking: keep the \
+head exactly the same position, size, pose and framing, keep the mouth closed exactly where it is, eyes open and \
+clearly visible, natural skin tone. Keep everything else the same." -o face_human.png
+lipsync out/rig/hero_rigged.glb line.wav -t line.txt -o out/talk/ --face-image face_human.png
+```
+
+A face turned away or fully covered has no lips to find: regenerate the image then (front view, face visible).
 
 ## How it works
 
-`mouth_rig.py` (Blender) welds the glTF seam duplicates, renders the head from the front and finds 478 face
-landmarks with MediaPipe (`face_landmarks.py`, own venv), ray-casts them onto the mesh and fits the lip line. TRELLIS
+`mouth_rig.py` (Blender) welds the glTF seam duplicates, renders the head from the front (framed on the skin around
+the Head bone, so parts skinned to the head out to the sides do not shrink the face) and finds 478 face landmarks
+with MediaPipe (`face_landmarks.py`, own venv), ray-casts them onto the mesh and fits the lip line. TRELLIS
 closes mouths with folds (a second skin layer behind the lips), so the mouth area is deleted and rebuilt as one clean
 layer re-sampled from the visible skin, then cut along the lip line. Jaw weights are a harmonic function on the cut
 surface; the jaw hinge sits in front of the ears and the full opening scales with the mouth width. Teeth, tongue and

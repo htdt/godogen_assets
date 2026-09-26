@@ -9,12 +9,14 @@ Here:
   * the per-voxel MLPs in the decoder's ConvNeXt blocks run in chunks, and the decoders' last upsampling stage runs
     on spatial slabs with a halo; both give bit-identical results (test_lowmem.py) with a fraction of
     the peak memory;
+  * the mesh extraction after the shape decoder looks up voxel neighbours in slices (bit-identical too);
   * PyTorch's cached VRAM is released before CuMesh (hole filling, simplification, remeshing) allocates its own;
   * the GLB export's dual-contouring remesh retries on a coarser grid if it runs out of memory;
   * token counts, the chosen resolution and per-stage VRAM peaks are recorded in `pipeline.info`.
 """
 import gc
 import ctypes
+import numpy as np
 import torch
 import torch.nn.functional as F
 from trellis2.pipelines import Trellis2ImageTo3DPipeline
@@ -117,6 +119,63 @@ def _decoder_forward_lowmem(self, x, guide_subs=None, return_subs=False):
 
 
 sparse_unet_vae.SparseUnetVaeDecoder.forward = _decoder_forward_lowmem
+
+
+# ---- mesh extraction: edge lookups in chunks ----
+# flexible_dual_grid_to_mesh builds the 12 edge neighbours of every voxel at once ((N, 3, 4, 3) int32) plus the hash
+# keys of the intersected ones: ~300 bytes per voxel of temporaries, 4 GB for a 13M-voxel woodpile on top of the
+# decoder's output. The same lookups run over slices of voxels here; the quads come out in the same order.
+from o_voxel.convert import flexible_dual_grid as _fdg
+from trellis2.models.sc_vaes import fdg_vae as _fdg_vae
+
+_orig_fdg_to_mesh = _fdg.flexible_dual_grid_to_mesh
+EDGE_CHUNK = 1 << 21  # voxels per edge-lookup chunk
+
+
+def _fdg_to_mesh_chunked(coords, dual_vertices, intersected_flag, split_weight, aabb, voxel_size=None, grid_size=None,
+                         train=False):
+    if train or split_weight is None or grid_size is None or coords.shape[0] <= EDGE_CHUNK:
+        return _orig_fdg_to_mesh(coords, dual_vertices, intersected_flag, split_weight, aabb, voxel_size=voxel_size,
+                                 grid_size=grid_size, train=train)
+    f = _orig_fdg_to_mesh
+    if not hasattr(f, 'edge_neighbor_voxel_offset'):  # the static tables the original builds on its first call
+        f.edge_neighbor_voxel_offset = torch.tensor([
+            [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]],
+            [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]],
+            [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]],
+        ], dtype=torch.int, device=coords.device).unsqueeze(0)
+        f.quad_split_1 = torch.tensor([0, 1, 2, 0, 2, 3], dtype=torch.long, device=coords.device)
+        f.quad_split_2 = torch.tensor([0, 1, 3, 3, 1, 2], dtype=torch.long, device=coords.device)
+    aabb = torch.as_tensor(np.asarray(aabb), dtype=torch.float32, device=coords.device) \
+        if not isinstance(aabb, torch.Tensor) else aabb
+    grid = torch.tensor([grid_size] * 3 if isinstance(grid_size, int) else list(grid_size), dtype=torch.int32,
+                        device=coords.device)
+    voxel = (aabb[1] - aabb[0]) / grid
+    N = dual_vertices.shape[0]
+    hashmap = _fdg._init_hashmap(grid, 2 * N, device=coords.device)
+    _fdg._C.hashmap_insert_3d_idx_as_val_cuda(*hashmap, torch.cat([torch.zeros_like(coords[:, :1]), coords], dim=-1),
+                                              *grid.tolist())
+    quads = []
+    for i in range(0, N, EDGE_CHUNK):
+        c = coords[i:i + EDGE_CHUNK]
+        connected = (c.reshape(-1, 1, 1, 3) + f.edge_neighbor_voxel_offset)[intersected_flag[i:i + EDGE_CHUNK]]
+        M = connected.shape[0]
+        key = torch.cat([torch.zeros((M * 4, 1), dtype=torch.int, device=coords.device), connected.reshape(-1, 3)], 1)
+        del connected
+        idx = _fdg._C.hashmap_lookup_3d_cuda(*hashmap, key, *grid.tolist()).reshape(M, 4).int()
+        del key
+        quads.append(idx[(idx != 0xffffffff).all(dim=1)])
+    del hashmap
+    quad_indices = torch.cat(quads)
+    del quads
+    vertices = (coords.float() + dual_vertices) * voxel + aabb[0].reshape(1, 3)
+    w = split_weight[quad_indices]
+    triangles = torch.where(w[:, 0] * w[:, 2] > w[:, 1] * w[:, 3], quad_indices[:, f.quad_split_1],
+                            quad_indices[:, f.quad_split_2]).reshape(-1, 3)
+    return vertices, triangles
+
+
+_fdg_vae.flexible_dual_grid_to_mesh = _fdg_to_mesh_chunked
 
 
 # ---- GLB export: remesh fallback ----
@@ -273,6 +332,7 @@ class LowMemTrellis2Pipeline(Trellis2ImageTo3DPipeline):
         if getattr(self, 'save_latent_path', None):
             torch.save({'shape_feats': shape_slat.feats.cpu(), 'tex_feats': tex_slat.feats.cpu(),
                         'coords': shape_slat.coords.cpu(), 'res': res}, self.save_latent_path)
+            self.info['latent'] = self.save_latent_path
         del cond_512, cond_1024, coords
         gc.collect()
         torch.cuda.empty_cache()

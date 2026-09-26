@@ -43,7 +43,10 @@ peak_vram_gb}` (batch: `{outputs: [...], seconds_total, peak_vram_gb}`) or `{"er
   for a character with more than one line (clones stay close to the reference; designed lines do not).
 - Emotion comes from the `--voice` description (`design`) or from the reference clip (`clone`, which takes no
   instruction). A character with several emotions needs one reference per emotion, or a cloud TTS with emotion tags.
-- Intelligibility is high; short shouted barks ("Argh! I'm hit!") are the weakest case, check them.
+- Intelligibility is high; short shouted barks ("Argh! I'm hit!") are the weakest case, check them. Shouts that are
+  not words (a war cry, "WAAAGH!", a roar) come out as unclear noise: make those with `stable-audio`, or layer them.
+- The pace follows the text more than the description: "slow and powerful" can still come out at 4 words a second.
+  Slow a line down afterwards without changing its pitch: `ffmpeg -i line.wav -filter:a atempo=0.9 line_slow.wav`.
 
 ## Setup
 

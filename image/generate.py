@@ -58,6 +58,8 @@ from PIL import Image  # noqa: E402
 
 MODEL_ID = "Qwen/Qwen-Image-2.1"
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+VAE_TILE, VAE_TILE_STRIDE = 768, 512  # --vae-tiling: tile size and step in pixels
+ALPHA_FLOOR, ALPHA_CEIL = 6, 250  # decoded alpha at or below the floor becomes 0, at or above the ceiling 255
 
 
 def local_quantized(dit_quant: str) -> str:
@@ -102,10 +104,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="CPU offload strategy. 'model' keeps one component on GPU at a time.")
     p.add_argument("--no-kv-cache", action="store_true",
                    help="Disable the prefix KV cache for text/condition tokens (slower, changes the sample).")
-    p.add_argument("--vae-tiling", action="store_true", help="Enable VAE tiling (helps at 2K resolution).")
+    p.add_argument("--vae-tiling", action="store_true",
+                   help=f"Decode in {VAE_TILE} px VAE tiles (needed at 2K on 12 GB).")
+    p.add_argument("--rgb", action="store_true",
+                   help="Save RGB. The VAE always decodes an alpha channel, and on opaque images it is not 255 "
+                        "everywhere (down to ~180 on a 2K painting).")
     p.add_argument("--json", action="store_true",
                    help="Print a JSON result (output path, size, seed, timing, peak VRAM) on stdout; logs go to stderr.")
     return p.parse_args(argv)
+
+
+def clean_alpha(image: Image.Image) -> Image.Image:
+    """Transparent to 0, opaque to 255: the decoded alpha leaves the background at 1-6 (a haze over bright
+    backgrounds, with the VAE tile grid in it) and the subject at 250-254. A linear map keeps soft edges soft."""
+    import numpy as np
+
+    a = np.asarray(image.getchannel("A"), dtype=np.float32)
+    a = np.clip((a - ALPHA_FLOOR) * 255 / (ALPHA_CEIL - ALPHA_FLOOR), 0, 255)
+    image = image.copy()
+    image.putalpha(Image.fromarray(np.round(a).astype(np.uint8)))
+    return image
 
 
 def make_tf_bnb_config(quant: str, dtype: torch.dtype):
@@ -256,7 +274,10 @@ def load_pipeline(args: argparse.Namespace):
 
 def finish_pipeline(pipe, args: argparse.Namespace, t0: float):
     if args.vae_tiling and hasattr(pipe.vae, "enable_tiling"):
-        pipe.vae.enable_tiling()
+        # The default 256 px tiles blended over 64 px leave a stripe every 192 px on smooth gradients (skies);
+        # 768 px tiles blended over 256 px show none and decode 2752x1536 in ~4.4 GB (untiled needs more than 12 GB).
+        pipe.vae.enable_tiling(tile_sample_min_height=VAE_TILE, tile_sample_min_width=VAE_TILE,
+                               tile_sample_stride_height=VAE_TILE_STRIDE, tile_sample_stride_width=VAE_TILE_STRIDE)
 
     if args.offload == "model":
         pipe.enable_model_cpu_offload()
@@ -308,6 +329,10 @@ def run(args: argparse.Namespace) -> dict:
     image = pipe(**call_kwargs).images[0]
     elapsed = time.time() - t0
 
+    if args.rgb:
+        image = image.convert("RGB")
+    elif image.mode == "RGBA":
+        image = clean_alpha(image)
     image.save(out_path)
     peak_gb = torch.cuda.max_memory_allocated() / 1e9
     log(f"[done] {out_path}  mode={image.mode} size={image.size}  {elapsed:.1f}s  peak VRAM {peak_gb:.2f} GB")

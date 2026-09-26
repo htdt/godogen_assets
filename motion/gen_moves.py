@@ -8,7 +8,8 @@ in-process with their work folder redirected to OUT_DIR/gen (NPZ + gate report p
 state.json, encoder.log). OUT_DIR gets manifest.json and one clip JSON per move.
 
 Incremental: a move whose spec entry is unchanged since its last accepted generation is reused (state.json holds a
-hash per move), so adding or rewording one move regenerates only that one.
+hash per move), so adding or rewording one move regenerates only that one. A move with no passing sample is left out
+and the others are baked; the run still fails, naming it.
 
 Handled here, on top of kimogen's spec: with stance_bookend moves, the move named by the spec's "stance" (default
 idle_stance, the name kimogen hardcodes) goes first and its medoid frame becomes the stance they start and end in; a
@@ -16,10 +17,16 @@ new stance regenerates them. Per move, "seed" (default 42) draws another best-of
 kimogen's jitter gate (mean joint acceleration, 0.015 m/frame^2) for fast moves such as runs and jumps, whose natural
 swing exceeds it. The Llama-3 text encoder service (CPU, 16 GB) is started only when something is generated, and
 stopped afterwards unless it was already running.
+
+Two gates are changed (gate_sample): a loop move's cycle is searched in every sample (loops.py) and gated, and the
+winner is cut to it (cut_loop) in place of kimogen's trim, which picks the stillest stretch of a repeated action and
+cuts at whole frames; the contact gate also accepts feet at rest above the floor (stairs, a ladder, a seat), where
+Kimodo's contact labels see none.
 """
 import argparse
 import contextlib
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -29,13 +36,50 @@ import sys
 import time
 import urllib.request
 
+import numpy as np
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, 'kimodo-practical', 'kimodo'))
 import kimogen  # noqa: E402
+import kimoconstraints  # noqa: E402
 import bake_kimodo  # noqa: E402
 
+
+def _load(name):  # by path: on sys.path, this folder's kimodo/ checkout would shadow the installed package
+    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+loops = _load('loops')
 ENCODER_URL = 'http://127.0.0.1:9550/'
 JITTER_MAX = kimogen.JITTER_MAX
+CONTACT_FRAC = 0.05  # kimogen's contact gate: feet carry the body in at least this share of the frames
+_gate_sample = kimogen.gate_sample
+
+
+def gate_sample(j, r, fc, idx, mv, stance, fps):
+    g = _gate_sample(j, r, fc, idx, mv, stance, fps)
+    if g.get('malformed'):
+        return g
+    if not g['contact_ok']:
+        g['support_frac'] = round(loops.support(j, idx, fps), 4)
+        g['contact_ok'] = g['support_frac'] >= CONTACT_FRAC
+    if mv.get('loop'):
+        found = loops.find(j, r, idx, fps)
+        g['loop_ok'] = found is not None and found['seam'] <= loops.LOOP_ERR_MAX
+        if found:
+            g.update(loop_seam=found['seam'], loop_motion=found['motion'],
+                     loop_window=[found['start'], found['period']])
+            g['score'] += found['seam'] * 10
+    g['pass'] = (not g['nonfinite'] and g['contact_ok'] and g['foot_skate_ok'] and g['jitter_ok']
+                 and g['travel_ok'] and g['apex_ok'] and g['stance_ok'] and g.get('loop_ok', True))
+    return g
+
+
+kimogen.gate_sample = gate_sample
+kimogen.best_loop = lambda j, r, *_, **__: ((0, len(j) - 1), 0.0)  # keep the whole take: cut_loop cuts it
 
 
 def run(module, *args):
@@ -74,6 +118,58 @@ def check(spec_path, names):
 def gates(mv):
     """The per-move settings kimogen takes per call: one gen call per distinct pair."""
     return mv.get('seed', 42), mv.get('jitter_max', JITTER_MAX)
+
+
+def cut_loop(mv):
+    """Cut an accepted loop move's whole take to the cycle its gates found (loops.cut); raises ValueError when the
+    cycle leaves out a required constraint."""
+    from kimodo.skeleton.definitions import SOMASkeleton77
+    name = mv['name']
+    npz_path, rep_path = (os.path.join(kimogen.MOVES_OUT, name + ext) for ext in ('.npz', '.json'))
+    rep = json.load(open(rep_path))
+    g = rep['gates']
+    s, P = g.pop('loop_window')
+    with np.load(npz_path) as f:
+        z = {k: f[k] for k in f.files}
+    skeleton = SOMASkeleton77()
+    idx = {n: i for i, n in enumerate(skeleton.bone_order_names)}
+    out, M, R2, p02 = loops.cut(z, s, P, skeleton, kimogen.canonicalize, idx)
+    resolved_path = os.path.join(kimogen.MOVES_OUT, name + '.resolved_constraints.json')
+    if os.path.exists(resolved_path):
+        resolved = json.load(open(resolved_path))
+        kept = []
+        for rec in resolved['records']:
+            f = (rec['frame'] - s) * M / P
+            if -0.5 <= f <= M + 0.5:
+                kept.append({**rec, 'frame': int(round(min(max(f, 0), M)))})
+            elif rec['required']:
+                raise ValueError(f'{name}: its cycle (frames {s}-{s + P:.0f}) leaves out the required '
+                                 f'{rec["type"]} constraint at frame {rec["frame"]}: author it inside one cycle, mark '
+                                 'it "required": false, or drop "loop"')
+        resolved.update(records=kimoconstraints.transform_records(kept, *kimoconstraints.compose_canonical(R2, p02)),
+                        frames=M + 1)
+        json.dump(resolved, open(resolved_path, 'w'), indent=1, allow_nan=False)
+    np.savez_compressed(npz_path, **out)
+    g['loop_err'], g['loop_trim'] = g.pop('loop_seam'), [s, round(s + P, 2)]
+    rep['frames'] = M + 1
+    rep['frame_data'] = kimogen.frame_data(out['posed_joints'], out['root_positions'], idx, mv, int(z['fps']))
+    json.dump(rep, open(rep_path, 'w'), indent=1, allow_nan=False)
+    print(f'[loop] {name}: frames {s}-{s + P:.2f} of the take -> a closed cycle of {M} frames, seam '
+          f'{g["loop_err"]} m, {g["loop_motion"]}x the take\'s motion', file=sys.stderr)
+
+
+def why(name):
+    """The gates that failed across a rejected move's samples, e.g. 'loop_ok 8/8, jitter_ok 2/8'."""
+    rep_path = os.path.join(kimogen.MOVES_OUT, name + '.json')
+    if not os.path.exists(rep_path):
+        return 'no report'
+    samples = json.load(open(rep_path)).get('all_gates') or []
+    counts = {}
+    for g in samples:
+        for k, v in g.items():
+            if k.endswith('_ok') and v is False:
+                counts[k] = counts.get(k, 0) + 1
+    return ', '.join(f'{k} {n}/{len(samples)}' for k, n in sorted(counts.items(), key=lambda kv: -kv[1])) or 'none'
 
 
 def encoder_up():
@@ -119,6 +215,8 @@ def main(spec_path, out_dir):
 
     def key(mv):
         k = {'move': mv, 'fps': spec.get('fps')}
+        if mv.get('loop'):
+            k['loop_cut'] = loops.VERSION
         if mv.get('constraints_file'):
             k['constraints_file'] = hashlib.sha1(
                 open(os.path.join(os.path.dirname(spec_path), mv['constraints_file']), 'rb').read()).hexdigest()
@@ -129,7 +227,7 @@ def main(spec_path, out_dir):
     def done(mv):
         return state.get(mv['name']) == key(mv) and os.path.exists(os.path.join(kimogen.MOVES_OUT, mv['name'] + '.npz'))
 
-    encoder, generated, rejected = None, [], []
+    encoder, generated, rejected = None, [], {}  # rejected: name -> reason
 
     def generate(batch):
         nonlocal encoder
@@ -139,19 +237,30 @@ def main(spec_path, out_dir):
         for seed, jitter_max in sorted({gates(mv) for mv in batch}):
             names = [mv['name'] for mv in batch if gates(mv) == (seed, jitter_max)]
             kimogen.JITTER_MAX = jitter_max  # read by kimogen.gate_sample
+            t_call = time.time()
             try:
                 code = run(kimogen, 'gen', '--spec', spec_path, '--only', ','.join(names), '--seed', str(seed))
             finally:  # keep what was accepted, even when a later move crashes
                 for name in names:
-                    if os.path.exists(os.path.join(kimogen.MOVES_OUT, name + '.npz')):
-                        state[name] = key(by_name[name])
-                        generated.append(name)
-                    else:
-                        state.pop(name, None)
+                    npz, rep = (os.path.join(kimogen.MOVES_OUT, name + ext) for ext in ('.npz', '.json'))
+                    state.pop(name, None)
+                    if not os.path.exists(rep) or os.path.getmtime(rep) < t_call:
+                        continue  # not reached (a crash): generated again next time
+                    if not os.path.exists(npz):
+                        rejected[name] = f'no sample passed ({why(name)})'
+                        continue
+                    try:
+                        if by_name[name].get('loop'):
+                            cut_loop(by_name[name])
+                    except ValueError as e:
+                        os.remove(npz)
+                        rejected[name] = str(e)
+                        continue
+                    state[name] = key(by_name[name])
+                    generated.append(name)
                 json.dump(state, open(state_path, 'w'), indent=1)
             if code not in (0, 1):  # 1 = some move had no passing sample
                 raise RuntimeError(f'kimogen gen failed for {", ".join(names)} (see stderr)')
-            rejected.extend(name for name in names if name not in state)
 
     def extract_stance():  # kimogen reads the stance from <moves>/idle_stance.npz
         src = os.path.join(work, 'stance_source')
@@ -168,11 +277,11 @@ def main(spec_path, out_dir):
             if os.path.exists(kimogen.STANCE_PATH):
                 os.remove(kimogen.STANCE_PATH)
             generate([by_name[stance]])
-            if stance in rejected:
-                raise RuntimeError(f'no stance: no sample of {stance} passed the gates')
-        if bookended and not os.path.exists(kimogen.STANCE_PATH):
+        if bookended and stance in rejected:
+            rejected.update((mv['name'], f'no stance: {stance} was rejected') for mv in bookended)
+        elif bookended and not os.path.exists(kimogen.STANCE_PATH):
             extract_stance()
-        todo = [mv for mv in moves if not done(mv)]
+        todo = [mv for mv in moves if not done(mv) and mv['name'] not in rejected]
         if todo:
             generate(todo)
     finally:
@@ -181,18 +290,30 @@ def main(spec_path, out_dir):
             encoder.wait()
     if generated or rejected:
         run(kimogen, 'report')
-    if rejected:
-        raise RuntimeError(f'no sample passed the gates for: {", ".join(rejected)} (reword the prompt, lengthen the '
-                           'duration, relax the gate or set another "seed"; the gate table is on stderr)')
 
-    manifest_path = os.path.join(out_dir, 'manifest.json')
-    if os.path.exists(manifest_path):  # clips of moves dropped from the spec
-        for mv in json.load(open(manifest_path))['moves']:
-            if mv['name'] not in by_name and os.path.exists(os.path.join(out_dir, mv['file'])):
+    for name in rejected:  # an older accepted clip of a now rejected move is not baked
+        npz = os.path.join(kimogen.MOVES_OUT, name + '.npz')
+        if os.path.exists(npz):
+            os.remove(npz)
+    baked = [mv['name'] for mv in moves if done(mv)]
+    result = {'output': out_dir, 'moves': baked, 'generated': generated, 'rejected': list(rejected)}
+    if baked:
+        manifest_path = os.path.join(out_dir, 'manifest.json')
+        old = json.load(open(manifest_path))['moves'] if os.path.exists(manifest_path) else []
+        if run(bake_kimodo, '--spec', spec_path, '--in', kimogen.MOVES_OUT, '--web', out_dir,
+               *(['--allow-missing'] if rejected else [])):
+            raise RuntimeError('bake failed (see stderr)')
+        for mv in old:  # clips of moves no longer in the set
+            if mv['name'] not in baked and os.path.exists(os.path.join(out_dir, mv['file'])):
                 os.remove(os.path.join(out_dir, mv['file']))
-    if run(bake_kimodo, '--spec', spec_path, '--in', kimogen.MOVES_OUT, '--web', out_dir):
-        raise RuntimeError('bake failed (see stderr)')
-    return {'output': out_dir, 'moves': list(by_name), 'generated': generated, 'seconds': round(time.time() - t0, 1)}
+    if rejected:
+        for name, reason in rejected.items():
+            print(f'[reject] {name}: {reason}', file=sys.stderr)
+        result['error'] = (f'rejected: {", ".join(rejected)}' + (f' (the other {len(baked)} moves are baked)' if baked
+                           else '') + '; reword the prompt, lengthen the duration, relax the gate or set another '
+                           '"seed" (the gate table is on stderr)')
+    result['seconds'] = round(time.time() - t0, 1)
+    return result
 
 
 if __name__ == '__main__':
@@ -210,4 +331,10 @@ if __name__ == '__main__':
         if a.json:
             print(json.dumps({'error': str(e)}), file=stdout)
         sys.exit(1)
-    print(json.dumps(result) if a.json else result['output'], file=stdout)
+    if 'error' in result:
+        print(f'gen-moves: {result["error"]}', file=sys.stderr)
+    if a.json:
+        print(json.dumps(result), file=stdout)
+    elif result['moves']:
+        print(result['output'], file=stdout)
+    sys.exit(1 if 'error' in result else 0)

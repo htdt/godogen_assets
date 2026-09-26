@@ -3,6 +3,7 @@
 
     stable-audio generate "two steel swords clashing, sharp metallic hit with a short ring" -o clash.wav
     stable-audio generate "coin pickup chime" --count 4 -o coin.wav          # coin_1.wav .. coin_4.wav
+    stable-audio generate "a single footstep on gravel" --count 3 --split -o step.wav   # one file per step
     stable-audio generate "steady rain on leaves" --loop --duration 20 -o rain.ogg
     stable-audio generate --json "..."                                         # JSON result on stdout
     stable-audio info                                                          # environment / model check
@@ -32,6 +33,10 @@ PREFIX = "TrackType: SFX, "
 MIN_GEN_S = 3.0
 TRIM_FLOOR_DB = -55.0  # trailing/leading audio this far below the peak is cut
 FADE_S = 0.03
+# --split: an event starts where the 10 ms envelope rises above EVENT_ON_DB (relative to the take's loudest moment)
+# after having fallen below EVENT_OFF_DB, at least MIN_GAP_S after the last one (closer rises are one sound: a heel
+# and toe, a double knock); shorter than MIN_EVENT_S once trimmed, it is a fragment and dropped
+EVENT_ON_DB, EVENT_OFF_DB, MIN_GAP_S, MIN_EVENT_S = -12.0, -24.0, 0.2, 0.1
 
 
 def log(*a) -> None:
@@ -47,16 +52,14 @@ def read_prompt(prompt: str) -> str:
     return prompt if prompt.lower().startswith("tracktype:") else PREFIX + prompt
 
 
-def output_paths(out: str | None, count: int) -> list[str]:
+def output_base(out: str | None) -> tuple[str, str]:
     if not out:
         out = os.path.join(HERE, "outputs", datetime.now().strftime("%Y%m%d-%H%M%S") + ".wav")
     base, ext = os.path.splitext(os.path.abspath(out))
     ext = ext or ".wav"
     if ext.lower() not in (".wav", ".ogg", ".flac", ".mp3"):
         raise SystemExit(f"unsupported output extension {ext!r}: use .wav, .ogg, .flac or .mp3")
-    if count == 1:
-        return [base + ext]
-    return [f"{base}_{i}{ext}" for i in range(1, count + 1)]
+    return base, ext
 
 
 def trim(audio, sr: int):
@@ -72,6 +75,34 @@ def trim(audio, sr: int):
     n = min(int(FADE_S * sr), audio.shape[1])
     audio[:, -n:] *= torch.linspace(1, 0, n)
     return audio
+
+
+def split_events(audio, sr: int) -> list:
+    """Cut a take holding several sounds (steps, knocks, chops) into one clip per sound: [(start_s, clip), ...]."""
+    import torch
+
+    hop = sr // 100
+    n = audio.shape[1] // hop
+    rms = audio[:, :n * hop].pow(2).mean(0).reshape(n, hop).mean(1).sqrt()
+    db = 20 * torch.log10(rms / rms.max().clamp(min=1e-9) + 1e-9)
+    onsets, armed = [], True
+    for i in range(n):
+        if armed and db[i] > EVENT_ON_DB:
+            j = i
+            while j > 0 and db[j - 1] < db[j] and (not onsets or j - 1 > onsets[-1]):  # back to the foot of the rise
+                j -= 1
+            if not onsets or j - onsets[-1] >= MIN_GAP_S * 100:
+                onsets.append(j)
+            armed = False
+        elif not armed and db[i] < EVENT_OFF_DB:
+            armed = True
+    events = []
+    for k, o in enumerate(onsets):
+        end = onsets[k + 1] * hop if k + 1 < len(onsets) else audio.shape[1]
+        clip = trim(audio[:, o * hop:end], sr)
+        if clip.shape[1] >= MIN_EVENT_S * sr:
+            events.append((o / 100, clip))
+    return events
 
 
 def make_loop(audio, sr: int, length_s: float, xfade_s: float):
@@ -107,7 +138,10 @@ def cmd_generate(ns: argparse.Namespace) -> int:
         raise SystemExit("--count must be >= 1")
     if ns.loop and ns.duration < 2:
         raise SystemExit("--loop needs --duration >= 2")
-    paths = output_paths(ns.out, ns.count)
+    if ns.loop and ns.split:
+        raise SystemExit("--split cuts one-shots; a --loop is one continuous sound")
+    base, ext = output_base(ns.out)
+    numbered = ns.count > 1 or ns.split
     xfade = min(1.0, ns.duration / 4) if ns.loop else 0.0
     gen_s = max(ns.duration + xfade, MIN_GEN_S)
     if gen_s > 120:
@@ -125,24 +159,32 @@ def cmd_generate(ns: argparse.Namespace) -> int:
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
         results = []
-        for i, path in enumerate(paths):
+        for i in range(ns.count):
             seed = seed0 + i
-            log(f"generating {path} (seed {seed}, {gen_s:.1f}s)...")
+            log(f"generating take {i + 1}/{ns.count} (seed {seed}, {gen_s:.1f}s)...")
             audio = model.generate(prompt=prompt, negative_prompt=ns.negative, duration=gen_s,
                                    steps=ns.steps, cfg_scale=ns.cfg, seed=seed)
             audio = audio[0].float().cpu().clamp(-1, 1)
             if ns.loop:
-                audio = make_loop(audio, sr, ns.duration, xfade)
-            elif not ns.no_trim:
-                audio = trim(audio, sr)
-            if ns.mono:
-                audio = audio.mean(dim=0, keepdim=True)
-            if not ns.no_normalize:
-                peak = float(audio.abs().max())
-                if peak > 0:
-                    audio = audio * (10 ** (-1 / 20) / peak)
-            save(path, audio, sr)
-            results.append({"output": path, "seed": seed, "length_s": round(audio.shape[1] / sr, 3)})
+                clips = [(None, make_loop(audio, sr, ns.duration, xfade))]
+            elif ns.split:
+                clips = split_events(audio, sr)
+                log(f"  {len(clips)} events at " + ", ".join(f"{s:.2f}s" for s, _ in clips))
+            else:
+                clips = [(None, audio if ns.no_trim else trim(audio, sr))]
+            for start, clip in clips:
+                if ns.mono:
+                    clip = clip.mean(dim=0, keepdim=True)
+                if not ns.no_normalize:
+                    peak = float(clip.abs().max())
+                    if peak > 0:
+                        clip = clip * (10 ** (-1 / 20) / peak)
+                path = f"{base}_{len(results) + 1}{ext}" if numbered else base + ext
+                save(path, clip, sr)
+                results.append({"output": path, "seed": seed, "length_s": round(clip.shape[1] / sr, 3),
+                                **({"start_s": start} if ns.split else {})})
+        if not results:
+            raise SystemExit("no sound event found in the generated takes")
         peak_vram = round(torch.cuda.max_memory_allocated() / 1e9, 2) if torch.cuda.is_available() else None
         device = str(model.device)
 
@@ -194,6 +236,9 @@ def main(argv: list[str] | None = None) -> int:
                         "trimmed to the sound; with --loop this is the exact loop length.")
     g.add_argument("--count", type=int, default=1, help="Number of variations (files get _1.._N suffixes).")
     g.add_argument("--loop", action="store_true", help="Seamless loop of exactly --duration seconds (ambience).")
+    g.add_argument("--split", action="store_true",
+                   help="One file per sound event: a take holding several steps, knocks or hits is cut at each one "
+                        "(files numbered _1.._N across all takes).")
     g.add_argument("--mono", action="store_true", help="Downmix to mono (e.g. for 3D positional sounds).")
     g.add_argument("--no-trim", action="store_true", help="Keep the full generated length.")
     g.add_argument("--no-normalize", action="store_true", help="Skip peak normalisation to -1 dBFS.")

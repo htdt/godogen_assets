@@ -141,6 +141,10 @@ def main():
             traceback.print_exc()
             msg = ('CUDA out of memory; try --type 512, a lower --max-tokens or fewer --faces' if lowmem.is_oom(e)
                    else f'{type(e).__name__}: {e}')
+            latent = getattr(pipeline, 'info', {}).get('latent')  # saved by this image's run, before decoding
+            if latent and os.path.exists(latent):
+                msg += (f'; the sampled latent is kept: gen3d --from-latent {latent} retries only decode and export '
+                        '(same -o, --faces, --tex)')
             print(f'[error] {path}: {msg}', file=sys.stderr)
             if args.json:
                 print(json.dumps({'input': os.path.abspath(path), 'error': msg}), file=result_out, flush=True)
@@ -173,7 +177,8 @@ def process(pipeline, path, args, sampler_override, o_voxel):
              'tex': args.tex}
     torch.cuda.reset_peak_memory_stats()
     t = time.time()
-    pipeline.save_latent_path = os.path.join(args.out, f'{name}_latent.pt') if args.save_latent else None
+    # always saved before decoding: a decode or export that fails keeps it, so a retry skips the sampling
+    pipeline.save_latent_path = None if args.from_latent else os.path.join(args.out, f'{name}_latent.pt')
     if args.from_latent:
         name = os.path.basename(path).replace('_latent.pt', '')  # already carries the original suffix
         mesh = decode_saved_latent(pipeline, path)
@@ -211,6 +216,9 @@ def process(pipeline, path, args, sampler_override, o_voxel):
     stats['glb_faces'] = int(len(glb.faces)) if hasattr(glb, 'faces') else None
     stats['glb_mb'] = round(os.path.getsize(glb_path) / 2**20, 1)
     stats['output'] = glb_path
+    latent = stats.pop('latent', None)
+    if latent and not args.save_latent:
+        os.remove(latent)
     with open(os.path.join(args.out, f'{name}.json'), 'w') as f:
         json.dump(stats, f, indent=2)
     print(json.dumps(stats), file=sys.stderr)

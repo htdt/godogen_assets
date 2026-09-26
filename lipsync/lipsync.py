@@ -23,6 +23,7 @@ import sys
 import os
 import json
 import math
+import struct
 import subprocess
 import numpy as np
 from mathutils import Vector, Quaternion, Matrix
@@ -86,9 +87,11 @@ curves = np.stack([smooth(tgt[:, 0], 0.045), smooth(tgt[:, 1], 0.035), smooth(tg
 
 # ---- scene ----
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.import_scene.gltf(filepath=src)
 scene = bpy.context.scene
-scene.render.fps = fps
+# before the import: the importer turns key times into frames at the scene rate and the exporter turns them back at
+# the rate then set, so clips already in the input keep their length only if both rates are the same
+scene.render.fps, scene.render.fps_base = fps, 1.0
+bpy.ops.import_scene.gltf(filepath=src)
 scene.frame_start, scene.frame_end = 1, nfr
 arm = next(o for o in scene.objects if o.type == 'ARMATURE')
 meshes = [o for o in scene.objects if o.type == 'MESH' and (o.parent is not None or len(o.data.vertices) > 100)]
@@ -134,9 +137,26 @@ for f in range(nfr):
         kb = keys.key_blocks[name]
         kb.value = float(np.clip(curves[f, k], 0, 1))
         kb.keyframe_insert('value', frame=f + 1)
+
+def clip_lengths(path):
+    """{animation name: seconds} from a GLB's JSON chunk."""
+    with open(path, 'rb') as f:
+        head = f.read(20)
+        gltf = json.loads(f.read(struct.unpack_from('<I', head, 12)[0]))
+    acc = gltf.get('accessors', [])
+    return {a.get('name'): max(acc[s['input']]['max'][0] for s in a['samplers'])
+            for a in gltf.get('animations', []) if a.get('samplers')}
+
+
+before = clip_lengths(src)
 # no sampling: only the keyed channels (jaw + morph weights) go into the clip, not every bone of the skeleton
 bpy.ops.export_scene.gltf(filepath=out, export_animations=True, export_animation_mode='ACTIONS', export_morph=True,
                           export_morph_normal=False, export_try_sparse_sk=True, export_force_sampling=False)
+after = clip_lengths(out)
+changed = [f'{n} {before[n]:.2f} -> {after[n]:.2f} s' for n in before
+           if n in after and n != action_name and abs(after[n] - before[n]) > 1.5 / fps]
+if changed:  # the clips the input already had must pass through unchanged
+    sys.exit('clip lengths changed on re-export: ' + ', '.join(changed))
 print('WROTE', out, 'frames', nfr, 'fps', fps, 'cues', len(cues))
 if not render_to:
     sys.exit(0)

@@ -26,7 +26,8 @@ mia-rig out/hero.glb --anim Walking.fbx -o out/rig/      # + a Mixamo clip -> he
 - `<name>_rigged.glb`: Mixamo bone names (`mixamorig:*`), T-pose bind, skinned, no animation, human scale
   (~1.8-2.1 m), facing +Z, grounded (soles at y=0, origin between the feet). The input for `lipsync` and
   `add-moves`; Mixamo names also retarget in Godot (BoneMap), Unity (Humanoid) and Unreal (IK Retargeter).
-  three.js's GLTFLoader strips the `:` (`mixamorigHips`).
+  Engines rewrite the `:`: Godot's importer makes it `_` (`mixamorig_Hips`; `find_bone("mixamorig:Hips")` returns
+  -1 without an error), three.js's GLTFLoader drops it (`mixamorigHips`).
 - `<name>_anim.glb` / `_anim.fbx` with `--anim`: the rig plus the clip (the GLB is rebuilt with Blender from MIA's
   rest pose and FBX action, because MIA's own FBX2glTF export loses the metallic/roughness map).
 - Two steps on top of MIA's demo pipeline: the torso is stood upright at bind (MIA straightens the limbs but keeps
@@ -34,7 +35,9 @@ mia-rig out/hero.glb --anim Walking.fbx -o out/rig/      # + a Mixamo clip -> he
   keeps TRELLIS's frame with the hips at the origin).
 
 Limits: humanoids only (two arms, two legs, one spine); anything held near the hands gets skinned to the forearm.
-Poses other than T/A work (MIA resets them), but arms away from the body rig best.
+Poses other than T/A work (MIA resets them), but arms away from the body rig best. Rigid parts of the body mesh
+(pauldrons, large armour plates) are skinned like flesh and bend and stretch with the limb: for rigid ones, generate
+them as separate props and attach them to a bone in the engine.
 
 Check a rig: `asset-blender tools/pose_test.py -- out/rig/hero_rigged.glb poses.png` (rest, arms down, arms up,
 guard, squat, twist + kick) and, for a clip, `asset-blender tools/render_anim.py -- out/rig/hero_anim.glb anim.png`.

@@ -6,7 +6,7 @@ Text-to-image, transparent (RGBA) generation and image editing with
 
 ```bash
 qwen-image generate "a red apple on a wooden table" -o apple.png
-qwen-image rgba "a wooden shield, game icon" -o shield.png                # real alpha, no matting needed
+qwen-image rgba "a wooden shield, game icon" -o shield.png                # RGBA: real alpha, no matting needed
 qwen-image edit -i apple.png "change the background to a sunset beach" -o beach.png
 qwen-image edit -i a.png -i b.png "put the character from image 1 into scene 2" -o out.png   # up to 10 references
 qwen-image generate --size 2048x2048 --seed 7 "..."                        # 2K; VAE tiling switches on by itself
@@ -34,11 +34,16 @@ Options for `generate` / `rgba` / `edit`:
 - One call at a time: each call loads the model (~10 s), generates and exits; two in parallel run out of memory.
   A 1024² image at 40 steps takes minutes; `--resolution 512 --steps 10` is ~8× faster for checking how a prompt
   reads.
-- `rgba` adds the model's RGBA phrasing to the prompt itself. Judge the alpha on a contrasting colour
+- `generate` writes RGB; `edit` too, unless an input image has transparent pixels (then RGBA). `rgba` writes RGBA
+  and adds the model's RGBA phrasing to the prompt itself; its background is alpha 0 and its solid parts 255 (the
+  decoded alpha sits at 1-6 and 250-254 and is stretched to the full range, soft edges stay soft). Stray specks
+  can still appear around the subject: judge the alpha on a contrasting colour
   (`magick out.png -background magenta -flatten qa.png`), not the raw PNG.
 - Out of memory: lower `--resolution` (edits use the most, the reference image doubles the token count) or
   `--quant nf4`.
 - Text inside the image (signs, labels, UI captions) renders legibly.
+- Flat decals "seen from directly above" (a puddle, a soot mark) can come back as an object (a disc with a hard rim)
+  or with a pale fringe in the soft alpha edge; look at them over the ground colour before use.
 
 ## How it works
 
@@ -51,6 +56,9 @@ then it quantizes the Hugging Face weights on every load.
 
 Never quantize the DiT with bitsandbytes LLM.int8 (`load_in_8bit`): its kernel casts activations to fp16, which
 overflows on this DiT and returns the same noise for every prompt. NF4 and torchao int8 are clean.
+
+From a 1536 px side up, the VAE decodes in 768 px tiles blended over 256 px (~4.4 GB at 2752x1536; untiled it does
+not fit 12 GB). diffusers' default 256 px tiles leave a stripe every 192 px on smooth gradients such as skies.
 
 With more VRAM, the underlying script runs other precisions straight from the Hugging Face weights:
 `image/.venv/bin/python image/generate.py "..." --model Qwen/Qwen-Image-2.1 --te-quant bf16 --dit-quant bf16 --offload none`

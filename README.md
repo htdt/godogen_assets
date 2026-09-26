@@ -29,7 +29,7 @@ with its own isolated environment; this repo holds the tools, their interfaces a
 | `gen-moves` | move spec (text prompts) → baked humanoid move set, best-of-8 per move with numeric gates (Kimodo) | GPU | [motion/](motion/README.md) |
 | `add-moves` | rigged GLB → GLB with Kimodo moves (idle, walk, run, jump, or `gen-moves` sets) + `rootmotion.json` | CPU | [motion/](motion/README.md) |
 | `lipsync` | rigged GLB + voice line → mouth rig (jaw, lips, teeth) + lip-synced `speak` clip | CPU | [lipsync/](lipsync/README.md) |
-| `stable-audio` | text → sound effect or seamless ambience loop (Stable Audio 3 small-sfx) | GPU | [sfx/](sfx/README.md) |
+| `stable-audio` | text → sound effects (one file per event with `--split`) or a seamless ambience loop (Stable Audio 3 small-sfx) | GPU | [sfx/](sfx/README.md) |
 | `qwen-tts` | text → voice line, from a voice description or a reference clip (Qwen3-TTS 1.7B) | GPU | [voice/](voice/README.md) |
 | `asset-blender` | runs a check script (`tools/`, `lipsync/`) in headless Blender 4.5 LTS | CPU | [below](#checking-results) |
 
@@ -140,7 +140,7 @@ bin/       the commands (thin launchers into each part's environment)
 image/     qwen-image    cli.py, generate.py (quantized pipeline), quantize.py
 mesh/      gen3d         gen3d.py, lowmem.py (the 12 GB patches for TRELLIS.2), test_lowmem.py
 rig/       mia-rig       mia_rig.py, Blender rig scripts (normalize_rig, merge_anim, rigops), make_templates.py
-motion/    gen-moves     gen_moves.py (Kimodo via kimodo-practical), basic.json (the default set)
+motion/    gen-moves     gen_moves.py (Kimodo via kimodo-practical), loops.py (loop cycles), basic.json (default set)
            add-moves     add_moves.py (the transfer)
 lipsync/   lipsync       mouth_rig.py, lipsync.py, face_landmarks.py, check renders (face_test, hole_check)
 sfx/       stable-audio  cli.py

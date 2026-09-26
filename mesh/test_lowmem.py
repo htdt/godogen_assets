@@ -1,5 +1,5 @@
-"""Check that lowmem's chunked final decoder stage reproduces the unchunked decode exactly (run after changing
-lowmem.py or updating TRELLIS.2). Needs a latent saved with `gen3d --save-latent`:
+"""Check that lowmem's chunked final decoder stage and chunked mesh extraction reproduce the unchunked ones exactly (run
+after changing lowmem.py or updating TRELLIS.2). Needs a latent saved with `gen3d --save-latent`:
 
     mesh/.conda/bin/python mesh/test_lowmem.py outputs/<name>_latent.pt
 """
@@ -45,3 +45,19 @@ print('shape coords equal', torch.equal(hc, hc2), 'max|dfeat|', (hf - hf2).abs()
 print('tex coords equal', torch.equal(tc, tc2), 'max|dfeat|', (tf - tf2).abs().max().item())
 print('last subdiv logits max|d|', (s_full - s_chunk).abs().max().item())
 print(f'peak VRAM unchunked {p_full:.2f} GB, chunked {p_chunk:.2f} GB')
+
+# mesh extraction: chunked edge lookups (small chunks, so any latent has several) against the original
+lowmem.FINAL_CHUNK, lowmem.EDGE_CHUNK = 20_000, 1 << 16
+with torch.no_grad():
+    h, _ = lowmem._decoder_forward_lowmem(shape_dec, shape, return_subs=True)
+    args = (h.coords[:, 1:], (1 + 2 * shape_dec.voxel_margin) * torch.sigmoid(h.feats[:, 0:3]) - shape_dec.voxel_margin,
+            h.feats[:, 3:6] > 0, torch.nn.functional.softplus(h.feats[:, 6:7]))
+    box = [[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]]
+    torch.cuda.reset_peak_memory_stats()
+    v1, f1 = lowmem._orig_fdg_to_mesh(*args, aabb=box, grid_size=lat['res'])
+    p1 = torch.cuda.max_memory_allocated() / 2**30
+    torch.cuda.reset_peak_memory_stats()
+    v2, f2 = lowmem._fdg_to_mesh_chunked(*args, aabb=box, grid_size=lat['res'])
+    p2 = torch.cuda.max_memory_allocated() / 2**30
+print('extraction vertices equal', torch.equal(v1, v2), 'faces equal', torch.equal(f1, f2),
+      f'| peak VRAM {p1:.2f} GB, chunked {p2:.2f} GB')

@@ -47,6 +47,7 @@ argv = sys.argv[sys.argv.index('--') + 1:]
 src, out = argv[0], argv[1]
 work = argv[argv.index('--work') + 1] if '--work' in argv else os.path.splitext(out)[0] + '_mouth'
 HINGE_K = float(argv[argv.index('--hinge-depth') + 1]) if '--hinge-depth' in argv else 0.62
+FACE_IMAGE = argv[argv.index('--face-image') + 1] if '--face-image' in argv else None
 os.makedirs(work, exist_ok=True)
 report = {'src': src}
 
@@ -137,9 +138,14 @@ for v in me.vertices:
             w_head[v.index] = g.weight
         elif g.group == ni_:
             w_neck[v.index] = g.weight
-hp = X[w_head > 0.5] @ np.array([Lv, Uv, Fv]).T
+# the head's extent for the front render: head-weighted skin near the Head bone's axis. Rigid parts skinned to the
+# head out to the sides (pauldron spikes, a helmet's horns) would otherwise shrink the face in the frame.
+hb = np.array(Wa @ arm.data.bones[HEAD].head_local)
+hp = (X[w_head > 0.5] - hb) @ np.array([Lv, Uv, Fv]).T
+top = hp[:, 1].max()
+hp = hp[(np.abs(hp[:, 0]) < 0.8 * top) & (np.abs(hp[:, 2]) < top)]
 lo, hi = hp.min(0), hp.max(0)
-head_center = Vector(((lo + hi) / 2) @ np.array([Lv, Uv, Fv]))
+head_center = Vector(hb + ((lo + hi) / 2) @ np.array([Lv, Uv, Fv]))
 head_size = hi - lo
 
 # ---- 2. front render + landmarks ----
@@ -179,24 +185,35 @@ scene.render.filepath = face_png
 bpy.ops.render.render(write_still=True)
 
 lm_json = os.path.join(work, 'landmarks_2d.json')
+lm_src = FACE_IMAGE or face_png  # --face-image: an edit of face_front.png with the same layout (lipsync/README.md)
 r = subprocess.run([os.path.join(HERE, '.venv', 'bin', 'python'), os.path.join(HERE, 'face_landmarks.py'),
-                    face_png, lm_json, '--debug', os.path.join(work, 'face_landmarks.png')],
+                    lm_src, lm_json, '--debug', os.path.join(work, 'face_landmarks.png'), '--draw-on', face_png],
                    env={'HOME': os.environ['HOME'], 'PATH': '/usr/bin:/bin'})
 if r.returncode != 0:
-    sys.exit(f'landmark detection failed ({r.returncode}); see {face_png}')
-lm2 = np.array(json.load(open(lm_json))['points'])[:, :2]
+    sys.exit(f'landmark detection failed ({r.returncode}): no face found in {lm_src}')
+lm_data = json.load(open(lm_json))
+if (lm_data['width'], lm_data['height']) != (RES, RES):
+    sys.exit(f'{lm_src} is {lm_data["width"]}x{lm_data["height"]}: a face image must keep face_front.png\'s '
+             f'{RES}x{RES} layout')
+lm2 = np.array(lm_data['points'])[:, :2]
 cam_right = cam.matrix_world.to_3x3() @ Vector((1, 0, 0))
 cam_up = cam.matrix_world.to_3x3() @ Vector((0, 1, 0))
 S_ = cam.data.ortho_scale
 polys = [list(p.vertices) for p in me.polygons]
 bvh = BVHTree.FromPolygons([Vector(p) for p in X], polys)  # world space, welded surface before the cut
 LM = np.full((len(lm2), 3), np.nan)
+on_head = []
 for i, (px, py) in enumerate(lm2):
     o = cam.location + cam_right * ((px / RES - 0.5) * S_) + cam_up * ((0.5 - py / RES) * S_)
-    hit = bvh.ray_cast(o, -fwd)[0]
+    hit, _, poly, _ = bvh.ray_cast(o, -fwd)
     if hit is not None:
         LM[i] = hit
+        on_head.append(w_head[polys[poly]].mean() + w_neck[polys[poly]].mean() > 0.5)
 report['landmarks_on_mesh'] = int(np.isfinite(LM[:, 0]).sum())
+report['landmarks_on_head'] = int(sum(on_head))
+if sum(on_head) < 0.8 * len(lm2):  # a "face" found on something else: a skull on a pauldron, a shield
+    sys.exit(f'the face found is not on the head ({sum(on_head)} of {len(lm2)} landmarks); see '
+             f'{os.path.join(work, "face_landmarks.png")}')
 
 # ---- 3. face frame: origin c0 = centre of the lip line; a = left, b = up, d = forward ----
 UP_IN = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308]

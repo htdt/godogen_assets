@@ -213,6 +213,11 @@ def cmd_generate(ns: argparse.Namespace) -> int:
         else:
             item.update(ref=ns.ref, ref_text=ns.ref_text)
         jobs = [make_job(item, os.getcwd())]
+    designed = {j["out"] for j in jobs if j["mode"] == "design"}
+    missing = sorted({j["ref"] for j in jobs if j["mode"] == "clone" and j["ref"] not in designed
+                      and not os.path.isfile(j["ref"])})
+    if missing:  # before any model loads, not after the design items have run
+        raise SystemExit("reference audio not found (and no design item makes it): " + ", ".join(missing))
 
     with contextlib.redirect_stdout(sys.stderr):
         results, peak = run(jobs, not ns.no_trim)

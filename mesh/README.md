@@ -24,7 +24,7 @@ Writes `<out>/<name>.glb`, `<name>_preview.png` (front/right/back/left, PBR-shad
 | `--max-tokens N` | 49152 | cascade token cap; lower = less VRAM on very dense shapes |
 | `--suffix S` | | appended to the output names |
 | `--no-preview` | | |
-| `--save-latent` / `--from-latent x_latent.pt` | | re-export (other `--faces` / `--tex`) without re-sampling |
+| `--save-latent` / `--from-latent x_latent.pt` | | re-export (other `--faces` / `--tex`) without re-sampling; a run whose decode or export fails keeps the latent (the error names it) |
 | `--json` | | per image the `<name>.json` stats plus `output` and `preview`, or `{"input", "error"}` |
 
 ## Input images
@@ -47,11 +47,17 @@ Writes `<out>/<name>.glb`, `<name>_preview.png` (front/right/back/left, PBR-shad
 - Hard-surface props and furniture are the strongest case (thin parts such as a wire handle survive). Characters are
   complete and rig-ready; faces are decent at 1024 and soft at 512, hands mitten-like, backs invented. Foliage
   becomes clumps (fine for stylised trees).
-- Typical defects: small holes, inner shells, glass and transparent parts export opaque.
+- Typical defects: small holes, inner shells, glass and transparent parts export opaque. Unseen sides are guessed:
+  gaps the background shows through (a palisade, a fence, a lattice) can close into a flat sheet on one side, a
+  thin curved part (a horn, a handle) can come back doubled on the back, and an open vessel (a pot, a bucket) has
+  no inside. Look at `<name>_preview.png`; a new `--seed` redraws the guess. For see-through structures, generate
+  one element and repeat it in the engine.
 - At a 30k budget the texture carries the detail; geometry loses small folds and facial relief, but rigging and
   animation behave the same as at full resolution.
 - Time grows with surface detail: at 1024, a character takes a few minutes and a leafy tree up to ~10; export adds
-  seconds. Host RAM peaks around 16 GB, so keep other RAM-heavy jobs off while it runs.
+  seconds. Host RAM peaks around 16 GB, so keep other RAM-heavy jobs off while it runs. VRAM grows with surface
+  detail too (a woodpile: 6.5 GB decoding, 10 GB exporting; fur or thatch more): keep other GPU users (an engine's
+  preview) off during a 1024 run on 12 GB.
 
 ## How it works
 
@@ -60,11 +66,16 @@ it to fit 12 GB. Sampling fits in 3-6 GB with TRELLIS.2's `low_vram` offloading;
 
 1. The last 512³ → 1024³ upsampling block of both sparse VAE decoders runs on x-axis slabs with a 2-voxel halo, and
    the ConvNeXt MLPs run in chunks. The result is bit-identical (`test_lowmem.py` checks it on a saved latent).
-2. PyTorch's cached VRAM is released before CuMesh (hole filling, simplification, remeshing) allocates its own.
-3. The export's dual-contouring remesh retries on a 768 / 512 grid when the 1024 grid does not fit.
-4. The cascade may pick a resolution below 1024 for extremely dense shapes (`--max-tokens`).
-5. Host RAM: only the sub-models of the chosen pipeline load, freed heap goes back to the OS, and the launcher sets
+2. The mesh extraction after the shape decoder looks up voxel neighbours in slices: 3.2 GB instead of 7.7 GB for a
+   13M-voxel woodpile. Also bit-identical (`test_lowmem.py`).
+3. PyTorch's cached VRAM is released before CuMesh (hole filling, simplification, remeshing) allocates its own.
+4. The export's dual-contouring remesh retries on a 768 / 512 grid when the 1024 grid does not fit.
+5. The cascade may pick a resolution below 1024 for extremely dense shapes (`--max-tokens`).
+6. Host RAM: only the sub-models of the chosen pipeline load, freed heap goes back to the OS, and the launcher sets
    `MALLOC_MMAP_THRESHOLD_` against glibc fragmentation.
+
+The sampled latent is saved before decoding and deleted after a successful export (kept with `--save-latent`): a
+decode or export that fails keeps it, so a retry skips the sampling, the longest part (up to ~15 min on dense shapes).
 
 ## Setup
 

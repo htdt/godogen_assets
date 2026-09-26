@@ -64,12 +64,24 @@ def read_prompt(prompt: str) -> str:
     return prompt
 
 
+def transparent(path: str) -> bool:
+    """Whether an input image has transparent pixels (an edit of it keeps the alpha channel)."""
+    from PIL import Image
+
+    with Image.open(path) as im:
+        if im.mode not in ("RGBA", "LA", "PA") and "transparency" not in im.info:
+            return False
+        return im.convert("RGBA").getchannel("A").getextrema()[0] < 128
+
+
 def build_generate_argv(ns: argparse.Namespace, prompt: str, images: list[str] | None) -> list[str]:
     import random
 
     argv = [prompt, "--steps", str(ns.steps), "--resolution", str(ns.resolution),
             "--seed", str(ns.seed if ns.seed is not None else random.randint(0, 2**31 - 1)),
             "--dit-quant", ns.quant, "--cfg", str(ns.cfg)]
+    if ns.command == "generate" or (ns.command == "edit" and not any(map(transparent, images))):
+        argv.append("--rgb")
     size = parse_size(ns.size)
     if size:
         argv += ["--width", str(size[0]), "--height", str(size[1])]

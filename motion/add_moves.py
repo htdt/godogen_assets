@@ -33,6 +33,24 @@ for _s in ('Left', 'Right'):
 REQUIRED = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head'] + [
     f'{s}{b}' for s in ('Left', 'Right') for b in ('Arm', 'ForeArm', 'Hand', 'UpLeg', 'Leg', 'Foot')]
 ALIGN = {'UpLeg': 'Leg', 'Leg': 'Foot', 'Arm': 'ForeArm', 'ForeArm': 'Hand'}  # bone -> child that sets its direction
+PLANTED_SPEED = 0.1  # m/s: a heel or toe slower than this carries weight (planted feet move < 0.05)
+MIN_RUN = 3          # frames: shorter planted or lifted runs are flicker
+
+
+def planted(pos, idx, fps, loop):
+    """Per frame [left, right], 1 = the foot is planted (heel or toe at rest, on the floor or on anything else)."""
+    flags = []
+    for side in ('Left', 'Right'):
+        p = pos[:, [idx[side + 'Foot'], idx[side + 'ToeBase']]]
+        slow = (np.linalg.norm(np.diff(p, axis=0), axis=-1) * fps < PLANTED_SPEED).any(axis=1)
+        f = np.append(slow, slow[0] if loop else slow[-1]).astype(int)       # a loop's last frame is its first
+        for value in (0, 1):  # fill short gaps, then drop short contacts
+            runs = np.flatnonzero(np.diff(np.r_[-1, f, -1]) != 0)
+            for a, b in zip(runs[:-1], runs[1:]):
+                if f[a] == value and b - a < MIN_RUN and 0 < a and b < len(f):
+                    f[a:b] = 1 - value
+        flags.append(f)
+    return np.stack(flags, 1).tolist()
 
 
 def strip(name):
@@ -220,11 +238,13 @@ def main(rig_path, out_path, rm_path, *baked_dirs):
             samplers.append({'input': times, 'output': add_accessor(gltf, blob, data, kind), 'interpolation': 'LINEAR'})
             channels.append({'sampler': len(samplers) - 1, 'target': {'node': i, 'path': prop}})
         anims.append({'name': mv['name'], 'samplers': samplers, 'channels': channels})
+        loop = bool(mv.get('loop', False))
         rootmotion['clips'][mv['name']] = {
-            'fps': fps, 'numFrames': n_frames, 'loop': bool(mv.get('loop', False)),
+            'fps': fps, 'numFrames': n_frames, 'loop': loop,
             'frameData': mv.get('frame_data'),
             'pelvisXZ': np.round(path[:, [0, 2]], 4).tolist(),
             'hipY': np.round(hips_w[:, 1], 4).tolist(),
+            'footContact': planted(pos, idx, fps, loop),
         }
         print(f'{mv["name"]}: {n_frames} frames @ {fps} fps', file=sys.stderr)
 

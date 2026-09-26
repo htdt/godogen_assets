@@ -21,9 +21,13 @@ names, a bind close to a T-pose with flat feet, facing +Z. `add_moves.py` (numpy
 animation per move and keeps the rest of the GLB as it is; a rig without the Mixamo core bones is an error.
 
 - Clips are in place: hips X/Z stay at bind, height follows the move. `<name>_rootmotion.json` carries the travel
-  for the game to move the entity by: `scaleRoot`, and per clip `fps`, `numFrames`, `loop`, `frameData`, `hipY` and
+  for the game to move the entity by: `scaleRoot`, and per clip `fps`, `numFrames`, `loop`, `frameData`, `hipY`,
   `pelvisXZ`, the hips' horizontal offset from the first frame, in metres in the character's frame (+z forward,
-  +x the character's left).
+  +x the character's left), and `footContact`, per frame `[left, right]`, 1 while that foot is planted (on the floor
+  or on anything else): footstep sounds go where a 0 turns 1, foot IK holds while it stays 1.
+- Loop clips are closed cycles: the last frame repeats the first, so they loop as imported (Godot: `loop_mode =
+  LINEAR`, length and tracks as imported; three.js / Bevy: repeat). One cycle lasts `(numFrames - 1) / fps` and
+  travels `pelvisXZ[-1]`: at each wrap, continue the entity's path from there.
 - Only the skeleton's Mixamo bones are keyed: a mouth rig's jaw stays free, so speech layers over any move. The
   mouth rig's `.face.json` is copied next to the output, where `lipsync --add` finds it.
   Other animations in the input are kept; one with a move's name is replaced.
@@ -38,9 +42,8 @@ engine-side rules (impact timing, gates against props).
 
 ## The basic set
 
-`basic.json`, baked by setup into `basic/`: `idle`, `walk`, `run` (loops, trimmed to their best cycle) and `jump`
-(starts and ends in the idle's stance). It covers a character that stands and moves around; every other move a game
-needs is a custom one.
+`basic.json`, baked by setup into `basic/`: `idle`, `walk`, `run` (loops) and `jump` (starts and ends in the idle's
+stance). It covers a character that stands and moves around; every other move a game needs is a custom one.
 
 ## Custom moves
 
@@ -66,7 +69,7 @@ add-moves out/rig/knight_rigged.glb --baked out/moves/knight
 | key | |
 |---|---|
 | `name`, `prompt`, `duration` | clip name; one action as "A person ..." with plain physical verbs; seconds (≤ 10) |
-| `loop` | cycles (idles, walks): trimmed to the best 1-3.2 s loop |
+| `loop` | cycles (idles, walks, a repeated action): the take's most seamless cycle (≥ 1 s) among those that keep the take's motion. Without it, the whole take is baked |
 | `travel` | `"fwd"`, `"back"`, `"in_place"` or `null`: gate on the net root travel |
 | `apex` | gate on the move's defining moment, in metres: `root_rise` (jumps), `root_dip` (crouches), `root_floor` (falls, `max`), `ankle_height` (kicks), `foot_excursion` (sweeps, lunges), with `min` and/or `max` |
 | `stance_bookend` | start and end in the stance of the move named by the spec's top-level `"stance"` (default `idle_stance`), which is generated first: one-shots chain with that idle, and their gates measure from standing |
@@ -75,13 +78,22 @@ add-moves out/rig/knight_rigged.glb --baked out/moves/knight
 | `jitter_max` | the jitter gate, mean joint acceleration (default 0.015 m/frame²): fast moves exceed it by nature (the basic `run` and `jump`: 0.03) |
 | `seed` | another best-of-8 draw (default 42) |
 
-- Samples are gated on foot skate, jitter, travel, apex, stance and constraint adherence; the best passing one wins.
-  When none passes, `gen-moves` exits 1 naming the moves, and the gate table on stderr shows why. Kimodo undershoots
-  amplitude: say the height or distance plainly ("at head height"), gate what defines the move (a jump gated only
-  on smoothness never leaves the ground; one without a bookend can start in a squat and pass its rise by standing
-  up), and when every sample fails, reword stronger or lengthen the duration.
-- One action per move: split combos into moves. Generate the natural tempo and play it faster in the engine rather
-  than squeezing the duration.
+- Samples are gated on foot contact (feet at rest, at any height: stairs and seats count), foot skate, jitter,
+  travel, apex, stance, constraint adherence and, for a loop, its cycle (`loop_err`: the seam in metres, at most 0.06;
+  `loop_motion`: the cycle's share of the take's motion, at least 0.75); the best passing one wins. A move with no
+  passing sample is left out and the others are baked; `gen-moves` then exits 1 naming it and the gates that failed,
+  and the gate table on stderr has the numbers. Kimodo undershoots amplitude: say the height or distance plainly ("at
+  head height"), gate what defines the move (a jump gated only on smoothness never leaves the ground; one without a
+  bookend can start in a squat and pass its rise by standing up), and when every sample fails, reword stronger or
+  lengthen the duration.
+- One action per move: split combos into moves. Kimodo also makes an action once: "repeatedly hammers" comes back as
+  one or two strikes, so its loop fails the motion gate. For a repeated action, prompt one repetition that ends where
+  it started ("raises the hammer, strikes down, and raises it again") with `loop`: the cycle runs from rest to rest.
+  Generate the natural tempo and play it faster in the engine rather than squeezing the duration.
+- Details that fix a position (a seat height, which shoulder carries the load, how far a hand reaches) are
+  suggestions to the model. Measure the clip and fit the scene to it: `hipY` in `rootmotion.json`, or `pos` in the
+  baked clip JSON (per frame, the joint positions in metres, joint order in `names`). To force a position, pin the
+  hand or foot with `constraints`.
 - Incremental: a move whose spec entry is unchanged is reused, so adding or rewording a move regenerates only that
   one. `<DIR>/gen/` holds the work (per-move NPZ and gate report); delete it to regenerate everything.
 - Cost: ~1 min GPU per move (~2.5 GB VRAM, one GPU job) plus the Llama-3 text encoder, a CPU service (~16 GB RAM) that
@@ -91,7 +103,8 @@ add-moves out/rig/knight_rigged.glb --baked out/moves/knight
   motion/kimenv/bin/python -P -m kimodo.scripts.run_text_encoder_server &` (without `GRADIO_SERVER_NAME` it binds all
   interfaces).
 
-`--json`: `{output, moves, generated, seconds}` or `{error}`. Look at every new move on a character before using it.
+`--json`: `{output, moves, generated, rejected, seconds}` (`moves`: the baked ones; with a rejected move also
+`error`, exit 1) or `{error}`. Look at every new move on a character before using it.
 
 `add-moves` transfers rotations, like any retargeter, so hand and foot targets authored in `constraints` do not land
 exactly on a character with other proportions.
@@ -99,7 +112,13 @@ exactly on a character with other proportions.
 ## How it works
 
 `gen_moves.py` runs kimodo-practical's `kimogen.py` (best-of-8, numeric gates) and `bake_kimodo.py` in-process,
-starting the text encoder service only when something needs generating.
+starting the text encoder service only when something needs generating. It replaces two of kimogen's gates.
+Contact also accepts feet at rest above the floor, where Kimodo's contact labels see none. Loops use `loops.py`
+instead of kimogen's trim, which picks the stillest stretch of a repeated action and cuts at whole frames. In
+every sample, `loops.py` searches for the cycle whose ends match best in pose and velocity, counted in frames of the
+cycle's own motion, among the cycles that keep the take's motion. It refines the period below a frame, then cuts the
+winner: resampled over the exact period, the remaining mismatch spread over the cycle, positions rebuilt by forward
+kinematics.
 
 `add_moves.py` does the transfer. Kimodo's SOMA skeleton has nearly the Mixamo layout and the T-pose as its zero
 pose, so the transfer is direct: each bone takes its source joint's world rotation from rest. Two static rest
